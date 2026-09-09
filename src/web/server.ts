@@ -8,8 +8,8 @@ import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
 export interface RunningWebServer { port: number; close(): Promise<void>; }
 
 export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
-  const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../../web/index.html");
-  const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
+  const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/index.html");
+  const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
     if (request.url === "/api/scene") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -37,6 +37,7 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
     response.writeHead(404).end();
   });
   const websocket = new WebSocketServer({ noServer: true });
+  server.keepAliveTimeout = 1;
   server.on("upgrade", (request, socket, head) => {
     if (request.url !== "/ws") { socket.destroy(); return; }
     websocket.handleUpgrade(request, socket, head, (client) => websocket.emit("connection", client, request));
@@ -50,7 +51,9 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
   if (!address || typeof address === "string") throw new Error("web_server_address_missing");
   return { port: address.port, close: async () => {
     unsubscribe();
-    await new Promise<void>((resolve) => websocket.close(() => resolve()));
+    for (const client of websocket.clients) client.terminate();
+    websocket.close();
+    server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   } };
 }
