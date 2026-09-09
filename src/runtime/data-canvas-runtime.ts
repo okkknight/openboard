@@ -5,6 +5,7 @@ import type { JsonObject, Scene, VisualPatch, VisualSpec } from "../core/types.j
 import { DuckDbEngine } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
+import { Persistence } from "./persistence.js";
 
 export interface RuntimeResult {
   status: "rendered";
@@ -18,8 +19,10 @@ export class DataCanvasRuntime {
   #store: SceneStore;
   #engine = new DuckDbEngine();
   #events = new EventBus();
+  #persistence?: Persistence;
+  #persistedHistoryLength = 0;
 
-  constructor(scene: Scene) { this.#store = new SceneStore(scene); }
+  constructor(scene: Scene, persistence?: Persistence) { this.#store = new SceneStore(scene); this.#persistence = persistence; }
   onEvent(listener: (event: SceneEvent) => void): () => void { return this.#events.on(listener); }
   inspect(): Scene { return this.#store.inspect(); }
   close(): void { this.#engine.close(); }
@@ -27,6 +30,7 @@ export class DataCanvasRuntime {
   async visualCreate(visual: VisualSpec, expectedRevision?: number): Promise<RuntimeResult> {
     const payload = await this.#render(visual);
     const mutation = this.#store.createVisual(visual, expectedRevision);
+    await this.#persist();
     const response = this.#response(mutation.visual, mutation.revision, payload);
     this.#events.emit({ type: "visual.created", canvas_id: response.canvas_id, revision: response.revision, visual_id: visual.id });
     return response;
@@ -36,6 +40,7 @@ export class DataCanvasRuntime {
     const preview = this.#store.previewPatch(id, patch);
     const payload = await this.#render(preview);
     const mutation = this.#store.patchVisual(id, patch, expectedRevision);
+    await this.#persist();
     const response = this.#response(mutation.visual, mutation.revision, payload);
     this.#events.emit({ type: "visual.changed", canvas_id: response.canvas_id, revision: response.revision, visual_id: id });
     return response;
@@ -54,5 +59,13 @@ export class DataCanvasRuntime {
 
   #response(visual: VisualSpec, revision: number, payload: { rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation }): RuntimeResult {
     return { status: "rendered", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: payload.rows.length, columns: payload.columns, plot: payload.plot }, observation: payload.observation };
+  }
+
+  async #persist(): Promise<void> {
+    if (!this.#persistence) return;
+    await this.#persistence.saveScene(this.#store.inspect());
+    const records = this.#store.historyRecords();
+    for (const record of records.slice(this.#persistedHistoryLength)) await this.#persistence.appendHistory(record);
+    this.#persistedHistoryLength = records.length;
   }
 }
