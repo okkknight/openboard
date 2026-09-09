@@ -7,6 +7,7 @@ function clone<T>(value: T): T {
 export class HistoryStore {
   #records: HistoryRecord[] = [];
   #snapshots = new Map<number, Scene>();
+  #checkpoints = new Map<string, number>();
 
   constructor(initialScene: Scene) {
     this.#snapshots.set(initialScene.revision, clone(initialScene));
@@ -32,4 +33,12 @@ export class HistoryStore {
   revisions(): number[] {
     return [...this.#snapshots.keys()].sort((left, right) => left - right);
   }
+
+  checkpoint(label: string, revision: number): void {
+    if (!label) throw new Error("invalid_checkpoint");
+    if (!this.#snapshots.has(revision)) throw new Error(`history_not_found: ${revision}`);
+    this.#checkpoints.set(label, revision);
+  }
+
+  checkpointRevision(label: string): number | undefined { return this.#checkpoints.get(label); }
 }

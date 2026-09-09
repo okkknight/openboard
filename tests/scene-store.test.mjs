@@ -113,3 +113,12 @@ test("groups and arranges selected visuals", () => {
   assert.deepEqual(store.inspect().canvas.groups, [{ id: "g1", visual_ids: ["v1", "v2"] }]);
   assert.ok(store.inspect().visuals.v2.layout.x > store.inspect().visuals.v1.layout.x);
 });
+
+test("names a checkpoint and resolves it for goto", () => {
+  const store = new SceneStore(seed());
+  store.patchVisual("v1", { set: { title: "Checkpoint state" } });
+  store.applyHistory({ action: "checkpoint", label: "before-breakdown" });
+  store.patchVisual("v1", { set: { title: "Later" } });
+  store.applyHistory({ action: "goto", label: "before-breakdown" });
+  assert.equal(store.inspect().visuals.v1.title, "Checkpoint state");
+});

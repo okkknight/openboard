@@ -219,10 +219,14 @@ export class SceneStore {
     const revisions = this.#history.revisions();
     const currentIndex = revisions.indexOf(this.#scene.revision);
     let revision: number | undefined;
-    if (input.action === "goto") revision = input.revision;
+    if (input.action === "goto") revision = input.revision ?? (input.label ? this.#history.checkpointRevision(input.label) : undefined);
     if (input.action === "undo") revision = revisions[currentIndex - 1];
     if (input.action === "redo") revision = revisions[currentIndex + 1];
-    if (input.action === "checkpoint") return { revision: this.#scene.revision };
+    if (input.action === "checkpoint") {
+      if (!input.label) throw new Error("invalid_checkpoint");
+      this.#history.checkpoint(input.label, this.#scene.revision);
+      return { revision: this.#scene.revision };
+    }
     if (input.action === "fork") return { revision: this.#scene.revision };
     if (revision === undefined) throw new Error(`history_not_found: ${input.action}`);
     this.#scene = this.#history.snapshotAt(revision);
