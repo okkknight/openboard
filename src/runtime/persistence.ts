@@ -49,4 +49,12 @@ export class Persistence {
     await writeFile(temporary, JSON.stringify(scene));
     await rename(temporary, destination);
   }
+
+  async loadSnapshot(revision: number): Promise<Scene | undefined> {
+    try { return JSON.parse(await readFile(join(this.#stateDirectory, "snapshots", `${revision}.json`), "utf8")) as Scene; }
+    catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
 }
