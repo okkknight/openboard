@@ -13,6 +13,7 @@
     "validate:contracts": "node scripts/validate-contracts.mjs",
     "verify:core": "npm run validate:contracts && npm run test:core",
     "build": "npm run build:core",
+    "start": "npm run build && node dist/index.js",
     "test": "npm run test:core"
   },
   "dependencies": {

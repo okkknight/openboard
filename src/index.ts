@@ -1,0 +1,21 @@
+import { access } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { DatasetRegistry } from "./data/dataset-registry.js";
+import { createMcpServer } from "./mcp/server.js";
+import { DataCanvasRuntime } from "./runtime/data-canvas-runtime.js";
+import { Persistence } from "./runtime/persistence.js";
+import { createWebServer } from "./web/server.js";
+
+const root = resolve(process.env.OPENBOARD_ROOT ?? process.cwd());
+const dataRoot = join(root, "data");
+const sourceRoot = await access(dataRoot).then(() => dataRoot).catch(() => join(root, "examples"));
+const persistence = new Persistence(root);
+const restored = await persistence.loadScene();
+const datasets = restored?.datasets ?? Object.fromEntries((await new DatasetRegistry().discover(sourceRoot)).map((dataset) => [dataset.id, dataset]));
+const runtime = new DataCanvasRuntime(restored ?? { canvas_id: "openboard", revision: 0, datasets, visuals: {}, annotations: {}, canvas: {} }, persistence);
+const web = await createWebServer(runtime, Number(process.env.OPENBOARD_PORT ?? 3000));
+const mcp = createMcpServer(runtime);
+await mcp.connect(new StdioServerTransport());
+console.error(`OpenBoard web viewport: http://127.0.0.1:${web.port}`);
+process.on("SIGINT", async () => { await web.close(); runtime.close(); await mcp.close(); process.exit(0); });
