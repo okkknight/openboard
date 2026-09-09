@@ -87,6 +87,12 @@ export class SceneStore {
     return clone(this.#scene);
   }
 
+  previewPatch(id: string, patch: VisualPatch): VisualSpec {
+    const visual = this.#scene.visuals[id];
+    if (!visual) throw new Error(`not_found: visual ${id}`);
+    return applyPatch(visual, patch);
+  }
+
   #assertRevision(expectedRevision?: number): void {
     if (expectedRevision !== undefined && expectedRevision !== this.#scene.revision) {
       throw new Error(`revision_conflict: expected ${expectedRevision}, actual ${this.#scene.revision}`);
