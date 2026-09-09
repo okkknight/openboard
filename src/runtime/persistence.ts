@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, rename } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HistoryRecord, Scene } from "../core/types.js";
 
@@ -39,5 +39,14 @@ export class Persistence {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+  }
+
+  async saveSnapshot(scene: Scene): Promise<void> {
+    const snapshots = join(this.#stateDirectory, "snapshots");
+    await mkdir(snapshots, { recursive: true });
+    const destination = join(snapshots, `${scene.revision}.json`);
+    const temporary = `${destination}.tmp`;
+    await writeFile(temporary, JSON.stringify(scene));
+    await rename(temporary, destination);
   }
 }
