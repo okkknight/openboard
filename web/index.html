@@ -1,8 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>OpenBoard</title></head>
-<body><main><h1>OpenBoard</h1><p id="connection">Connecting…</p><pre id="scene"></pre></main>
-<script type="module">
-const scene = await fetch('/api/scene').then(r => r.json());
-document.querySelector('#connection').textContent = 'Connected';
-document.querySelector('#scene').textContent = JSON.stringify(scene, null, 2);
+<body><main><h1>OpenBoard</h1><p id="connection">Connecting…</p><section id="canvas"></section></main>
+<script src="/assets/plot.js"></script><script type="module">
+const canvas = document.querySelector('#canvas');
+async function render(id) { const payload = await fetch('/api/visual/' + encodeURIComponent(id)).then(r => r.json()); const card = document.querySelector(`[data-visual="${id}"]`) || document.createElement('article'); card.dataset.visual = id; card.replaceChildren(Object.assign(document.createElement('h2'), {textContent: payload.result.visual.title || id}), Plot.plot({width: payload.result.visual.layout.w, height: payload.result.visual.layout.h, marks: payload.result.plot.marks.map(mark => Plot[mark.type](payload.result.plot.data, mark.options))})); canvas.append(card); }
+const scene = await fetch('/api/scene').then(r => r.json()); await Promise.all(Object.keys(scene.visuals).map(render));
+const socket = new WebSocket(`ws://${location.host}/ws`); socket.onopen = () => document.querySelector('#connection').textContent = 'Connected'; socket.onmessage = async ({data}) => { const event = JSON.parse(data); if (event.visual_id) await render(event.visual_id); };
 </script></body></html>

@@ -42,6 +42,12 @@ export class DataCanvasRuntime {
     return { columns: result.columns, data: result.rows, observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
   }
 
+  async renderVisual(id: string): Promise<RuntimeResult> {
+    const visual = this.#store.inspect().visuals[id];
+    if (!visual) throw new Error(`not_found: visual ${id}`);
+    return this.#response(visual, this.#store.inspect().revision, await this.#render(visual));
+  }
+
   async visualCreate(visual: VisualSpec, expectedRevision?: number): Promise<RuntimeResult> {
     const payload = await this.#render(visual);
     const mutation = this.#store.createVisual(visual, expectedRevision);

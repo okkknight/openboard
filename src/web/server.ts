@@ -9,10 +9,24 @@ export interface RunningWebServer { port: number; close(): Promise<void>; }
 
 export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../../web/index.html");
+  const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
     if (request.url === "/api/scene") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(runtime.inspect()));
+      return;
+    }
+    if (request.url?.startsWith("/api/visual/")) {
+      const id = decodeURIComponent(request.url.slice("/api/visual/".length));
+      try {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(await runtime.renderVisual(id)));
+      } catch { response.writeHead(404).end(); }
+      return;
+    }
+    if (request.url === "/assets/plot.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(plotPath));
       return;
     }
     if (request.url === "/" || request.url === "/index.html") {
