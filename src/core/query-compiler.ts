@@ -1,4 +1,20 @@
-import type { CompiledQuery, DimensionSpec, FilterSpec, JsonPrimitive, MeasureSpec, QuerySpec } from "./types.js";
+import type { CompiledQuery, DimensionSpec, FilterSpec, JsonPrimitive, MeasureSpec, QuerySpec, SampleSpec } from "./types.js";
+
+export class RenderLimitExceededError extends Error {
+  readonly code = "render_limit_exceeded";
+
+  constructor(readonly requested_rows: number, readonly limit: number) {
+    super(`render_limit_exceeded: requested ${requested_rows}, limit ${limit}`);
+  }
+}
+
+export function assertRenderable(rowCount: number, pointLimit: number, explicitSample?: SampleSpec): void {
+  if (!Number.isInteger(rowCount) || rowCount < 0) throw new Error("invalid_row_count");
+  if (!Number.isInteger(pointLimit) || pointLimit <= 0) throw new Error("invalid_point_limit");
+  if (rowCount <= pointLimit) return;
+  if (explicitSample && explicitSample.size > 0 && explicitSample.size <= pointLimit) return;
+  throw new RenderLimitExceededError(rowCount, pointLimit);
+}
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;

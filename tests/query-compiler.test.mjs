@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compileQuery } from "../dist/core/query-compiler.js";
+import { assertRenderable, compileQuery } from "../dist/core/query-compiler.js";
 
 test("quotes identifiers and parameterizes filter values", () => {
   const q = compileQuery("orders", ["channel", "amount"], {
@@ -34,4 +34,12 @@ test("raw sql cannot be mixed with structured fields", () => {
     () => compileQuery("orders", ["channel"], { sql: "select * from orders", dimensions: [{ field: "channel" }] }),
     /mixed_raw_sql/
   );
+});
+
+test("rejects an over-limit raw result unless the caller explicitly samples", () => {
+  assert.throws(
+    () => assertRenderable(50_001, 50_000),
+    (error) => error.code === "render_limit_exceeded" && error.requested_rows === 50_001 && error.limit === 50_000
+  );
+  assert.doesNotThrow(() => assertRenderable(50_001, 50_000, { method: "reservoir", size: 20_000 }));
 });
