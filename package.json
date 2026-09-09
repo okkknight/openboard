@@ -19,10 +19,12 @@
     "@duckdb/node-api": "1.5.5-r.4",
     "@modelcontextprotocol/server": "2.0.0",
     "@observablehq/plot": "0.6.17",
+    "ws": "^8.18.3",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.16.0",
+    "@types/ws": "^8.5.14",
     "typescript": "5.8.3"
   }
 }
