@@ -120,7 +120,9 @@ export class DataCanvasRuntime {
 
   async #persist(): Promise<void> {
     if (!this.#persistence) return;
-    await this.#persistence.saveScene(this.#store.inspect());
+    const scene = this.#store.inspect();
+    await this.#persistence.saveScene(scene);
+    await this.#persistence.saveSnapshot(scene);
     const records = this.#store.historyRecords();
     for (const record of records.slice(this.#persistedHistoryLength)) await this.#persistence.appendHistory(record);
     this.#persistedHistoryLength = records.length;
