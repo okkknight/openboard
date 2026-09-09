@@ -1,0 +1,25 @@
+{
+  "name": "openboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build:core": "tsc -p tsconfig.core.json",
+    "test:core": "npm run build:core && node --test tests/*.test.mjs",
+    "validate:contracts": "node scripts/validate-contracts.mjs",
+    "verify:core": "npm run validate:contracts && npm run test:core",
+    "build": "npm run build:core",
+    "test": "npm run test:core"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "1.5.5",
+    "@modelcontextprotocol/server": "2.0.0",
+    "@observablehq/plot": "0.6.17",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

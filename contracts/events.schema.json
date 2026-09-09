@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://data-canvas.local/schema/events.schema.json",
+  "title": "Data Canvas Scene Event",
+  "type": "object",
+  "required": ["type", "canvas_id", "revision"],
+  "properties": {
+    "type": {
+      "enum": [
+        "scene.loaded",
+        "visual.created",
+        "visual.changed",
+        "visual.removed",
+        "annotation.created",
+        "annotation.removed",
+        "focus.changed",
+        "layout.changed",
+        "history.changed"
+      ]
+    },
+    "canvas_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "visual_id": { "type": "string" },
+    "annotation_id": { "type": "string" },
+    "affected_ids": { "type": "array", "items": { "type": "string" } },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

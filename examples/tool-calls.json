@@ -1,0 +1,43 @@
+{
+  "visual.create": {
+    "source": "orders",
+    "title": "Failure rate by channel",
+    "query": {
+      "dimensions": [{ "field": "channel" }],
+      "measures": [
+        { "agg": "count", "alias": "orders" },
+        { "expr": "avg(case when status='FAILED' then 1 else 0 end)", "alias": "failure_rate" }
+      ]
+    },
+    "marks": [
+      { "id": "failure", "type": "barY", "x": "channel", "y": "failure_rate" }
+    ],
+    "placement": "auto"
+  },
+  "visual.patch": {
+    "id": "v1",
+    "patch": {
+      "set": {
+        "title": "Daily failure-rate trend",
+        "query.filters": [{ "field": "created_at", "op": "last_days", "value": 30 }],
+        "query.dimensions": [{ "field": "created_at", "time_grain": "day", "alias": "day" }]
+      },
+      "remove_marks": ["failure"],
+      "add_marks": [
+        { "id": "trend", "type": "lineY", "x": "day", "y": "failure_rate" }
+      ]
+    }
+  },
+  "visual.clone": {
+    "id": "v1",
+    "new_id": "v2",
+    "placement": "right",
+    "patch": {
+      "set": {
+        "title": "Channel B by city",
+        "query.filters": [{ "field": "channel", "op": "eq", "value": "B" }],
+        "query.dimensions": [{ "field": "city" }]
+      }
+    }
+  }
+}

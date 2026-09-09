@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://data-canvas.local/schema/tool-output.schema.json",
+  "title": "Data Canvas Tool Output",
+  "type": "object",
+  "required": ["status", "canvas_id", "revision"],
+  "properties": {
+    "status": {
+      "enum": [
+        "ok",
+        "rendered",
+        "render_limit_exceeded",
+        "revision_conflict",
+        "not_found",
+        "invalid_spec",
+        "unsupported_visual_feature",
+        "query_rejected",
+        "error"
+      ]
+    },
+    "canvas_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "result": { "$ref": "#/$defs/result" },
+    "observation": { "$ref": "#/$defs/observation" },
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "result": {
+      "type": "object",
+      "properties": {
+        "visual_id": { "type": "string" },
+        "annotation_id": { "type": "string" },
+        "dataset": { "type": "string" },
+        "rows": { "type": "integer", "minimum": 0 },
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "scene": { "$ref": "scene.schema.json" },
+        "visual": { "$ref": "scene.schema.json#/$defs/visual" },
+        "data": { "type": "array", "items": { "type": "object" } },
+        "capabilities": { "type": "object" },
+        "requested_rows": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1 },
+        "suggestions": { "type": "array", "items": { "type": "string" } },
+        "checkpoint": { "type": "string" },
+        "parent_revision": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "observation": {
+      "type": "object",
+      "properties": {
+        "row_count": { "type": "integer", "minimum": 0 },
+        "numeric": { "type": "object" },
+        "categories": { "type": "object" },
+        "ordered": { "type": "object" },
+        "missing": { "type": "object" },
+        "outliers": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

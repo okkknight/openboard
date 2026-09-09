@@ -1,0 +1,14 @@
+{
+  "canvas_id": "example",
+  "revision": 0,
+  "datasets": {
+    "orders": {
+      "id": "orders",
+      "path": "examples/orders.csv",
+      "format": "csv"
+    }
+  },
+  "visuals": {},
+  "annotations": {},
+  "canvas": {}
+}

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://data-canvas.local/schema/scene.schema.json",
+  "title": "Data Canvas Scene",
+  "type": "object",
+  "required": ["canvas_id", "revision", "datasets", "visuals", "annotations", "canvas"],
+  "properties": {
+    "canvas_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "datasets": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/dataset" }
+    },
+    "visuals": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/visual" }
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/annotation" }
+    },
+    "canvas": { "$ref": "#/$defs/canvas" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "required": ["id", "path", "format"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "format": { "enum": ["csv", "parquet"] },
+        "fingerprint": { "type": "string" },
+        "row_count": { "type": "integer", "minimum": 0 },
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } }
+      },
+      "additionalProperties": false
+    },
+    "column": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "role": { "enum": ["dimension", "measure", "time", "unknown"] },
+        "nullable": { "type": "boolean" },
+        "distinct_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "query": {
+      "type": "object",
+      "properties": {
+        "filters": { "type": "array", "items": { "$ref": "#/$defs/filter" } },
+        "dimensions": { "type": "array", "items": { "$ref": "#/$defs/dimension" } },
+        "measures": { "type": "array", "items": { "$ref": "#/$defs/measure" } },
+        "sort": { "type": "array", "items": { "$ref": "#/$defs/sort" } },
+        "limit": { "type": "integer", "minimum": 1 },
+        "sample": { "$ref": "#/$defs/sample" },
+        "sql": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "filter": {
+      "type": "object",
+      "required": ["field", "op"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "op": { "enum": ["eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "between", "contains", "is_null", "not_null", "last_days"] },
+        "value": {}
+      },
+      "additionalProperties": false
+    },
+    "dimension": {
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "time_grain": { "enum": ["minute", "hour", "day", "week", "month", "quarter", "year"] },
+        "alias": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "measure": {
+      "type": "object",
+      "required": ["alias"],
+      "properties": {
+        "field": { "type": "string" },
+        "agg": { "enum": ["count", "count_distinct", "sum", "avg", "min", "max", "median", "quantile"] },
+        "expr": { "type": "string" },
+        "alias": { "type": "string", "minLength": 1 },
+        "quantile": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "sort": {
+      "type": "object",
+      "required": ["field", "direction"],
+      "properties": {
+        "field": { "type": "string" },
+        "direction": { "enum": ["asc", "desc"] }
+      },
+      "additionalProperties": false
+    },
+    "sample": {
+      "type": "object",
+      "required": ["method", "size"],
+      "properties": {
+        "method": { "enum": ["reservoir"] },
+        "size": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "mark": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell", "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY"] },
+        "x": {}, "y": {}, "color": {}, "fill": {}, "stroke": {}, "size": {}, "text": {},
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "filter": { "type": "array", "items": { "$ref": "#/$defs/filter" } },
+        "options": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "layout": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "number" }, "y": { "type": "number" },
+        "w": { "type": "number", "exclusiveMinimum": 0 },
+        "h": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "visual": {
+      "type": "object",
+      "required": ["id", "kind", "source", "query", "marks", "layout"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["plot", "table", "kpi"] },
+        "title": { "type": "string" },
+        "source": { "type": "string", "minLength": 1 },
+        "query": { "$ref": "#/$defs/query" },
+        "marks": { "type": "array", "items": { "$ref": "#/$defs/mark" } },
+        "layout": { "$ref": "#/$defs/layout" },
+        "derived_from": { "type": "string" },
+        "facet": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "annotation": {
+      "type": "object",
+      "required": ["id", "text", "created_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "target": { "type": "string" },
+        "text": { "type": "string" },
+        "anchor": {
+          "type": "object",
+          "required": ["x", "y"],
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+          "additionalProperties": false
+        },
+        "created_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "focus": { "type": "string" },
+        "viewport": {
+          "type": "object",
+          "required": ["x", "y", "zoom"],
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "zoom": { "type": "number", "exclusiveMinimum": 0 } },
+          "additionalProperties": false
+        },
+        "groups": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0",
+  "tool_count": 9,
+  "common_output": {
+    "required": ["status", "canvas_id", "revision"],
+    "statuses": ["ok", "rendered", "render_limit_exceeded", "revision_conflict", "not_found", "invalid_spec", "unsupported_visual_feature", "query_rejected", "error"]
+  },
+  "tools": [
+    {
+      "name": "canvas.inspect",
+      "purpose": "Inspect current scene, datasets, visuals, focus, revision and supported visual capabilities.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "include": { "type": "array", "items": { "enum": ["datasets", "visuals", "annotations", "canvas", "capabilities"] } }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "data.inspect",
+      "purpose": "Inspect dataset schema/profile and selected fields before analysis.",
+      "input": {
+        "type": "object",
+        "required": ["dataset"],
+        "properties": {
+          "dataset": { "type": "string" },
+          "fields": { "type": "array", "items": { "type": "string" } },
+          "top_k": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+          "sample_rows": { "type": "integer", "minimum": 0, "maximum": 100, "default": 5 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "data.query",
+      "purpose": "Run structured QuerySpec or trusted local read-only SQL without creating a visual.",
+      "input": {
+        "type": "object",
+        "required": ["dataset", "query"],
+        "properties": {
+          "dataset": { "type": "string" },
+          "query": { "$ref": "scene.schema.json#/$defs/query" },
+          "observation": { "type": "boolean", "default": true }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "visual.create",
+      "purpose": "Create one persistent visual object from a dataset, query, layered marks and placement.",
+      "input": {
+        "type": "object",
+        "required": ["source", "query", "marks"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["plot", "table", "kpi"], "default": "plot" },
+          "title": { "type": "string" },
+          "source": { "type": "string" },
+          "query": { "$ref": "scene.schema.json#/$defs/query" },
+          "marks": { "type": "array", "items": { "$ref": "scene.schema.json#/$defs/mark" } },
+          "layout": { "$ref": "scene.schema.json#/$defs/layout" },
+          "placement": { "enum": ["auto", "right", "left", "below", "above"] },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "visual.patch",
+      "purpose": "Mutate an existing visual in place; the default response to a request that changes the current view.",
+      "input": {
+        "type": "object",
+        "required": ["id", "patch"],
+        "properties": {
+          "id": { "type": "string" },
+          "patch": {
+            "type": "object",
+            "properties": {
+              "set": { "type": "object" },
+              "unset": { "type": "array", "items": { "type": "string" } },
+              "add_marks": { "type": "array", "items": { "$ref": "scene.schema.json#/$defs/mark" } },
+              "remove_marks": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "visual.clone",
+      "purpose": "Clone a visual to preserve a comparison/branch, optionally applying a patch and relative placement.",
+      "input": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "new_id": { "type": "string" },
+          "patch": { "type": "object" },
+          "placement": { "enum": ["auto", "right", "left", "below", "above"] },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "canvas.compose",
+      "purpose": "Perform spatial/scene operations that are not data-analysis operations.",
+      "input": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "enum": ["move", "resize", "delete", "focus", "group", "ungroup", "arrange"] },
+          "target": { "type": "string" },
+          "targets": { "type": "array", "items": { "type": "string" } },
+          "layout": { "$ref": "scene.schema.json#/$defs/layout" },
+          "arrangement": { "enum": ["row", "column", "grid", "compact"] },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "canvas.annotate",
+      "purpose": "Persist a plain-text analytical note on the scene or a specific visual.",
+      "input": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "id": { "type": "string" },
+          "target": { "type": "string" },
+          "text": { "type": "string", "minLength": 1 },
+          "anchor": {
+            "type": "object",
+            "required": ["x", "y"],
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "additionalProperties": false
+          },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "history.apply",
+      "purpose": "Navigate or branch analysis history without inventing a separate BI workflow model.",
+      "input": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "enum": ["undo", "redo", "checkpoint", "goto", "fork"] },
+          "revision": { "type": "integer", "minimum": 0 },
+          "label": { "type": "string" },
+          "expected_revision": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}
