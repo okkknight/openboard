@@ -104,3 +104,12 @@ test("history apply returns an earlier immutable scene snapshot", () => {
   assert.equal(result.revision, 1);
   assert.equal(store.inspect().visuals.v1.title, "One");
 });
+
+test("groups and arranges selected visuals", () => {
+  const store = new SceneStore(seed());
+  store.createVisual({ ...store.inspect().visuals.v1, id: "v2", layout: { x: 0, y: 0, w: 100, h: 100 } });
+  store.compose({ action: "group", target: "g1", targets: ["v1", "v2"] });
+  store.compose({ action: "arrange", targets: ["v1", "v2"], arrangement: "row" });
+  assert.deepEqual(store.inspect().canvas.groups, [{ id: "g1", visual_ids: ["v1", "v2"] }]);
+  assert.ok(store.inspect().visuals.v2.layout.x > store.inspect().visuals.v1.layout.x);
+});

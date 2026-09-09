@@ -174,6 +174,29 @@ export class SceneStore {
         draft.visuals[input.target].layout = clone(input.layout);
         return;
       }
+      if (input.action === "group") {
+        if (!input.target || !input.targets?.length) throw new Error("invalid_compose: group target and targets required");
+        if (input.targets.some((id) => !draft.visuals[id])) throw new Error("not_found: visual");
+        draft.canvas.groups = (draft.canvas.groups ?? []).filter((group) => group.id !== input.target);
+        draft.canvas.groups.push({ id: input.target, visual_ids: [...input.targets] });
+        return;
+      }
+      if (input.action === "ungroup") {
+        if (!input.target) throw new Error("invalid_compose: group target required");
+        draft.canvas.groups = (draft.canvas.groups ?? []).filter((group) => group.id !== input.target);
+        return;
+      }
+      if (input.action === "arrange") {
+        if (!input.targets?.length || !input.arrangement) throw new Error("invalid_compose: targets and arrangement required");
+        const visuals = input.targets.map((id) => draft.visuals[id]);
+        if (visuals.some((visual) => !visual)) throw new Error("not_found: visual");
+        const first = visuals[0].layout;
+        visuals.forEach((visual, index) => {
+          if (input.arrangement === "row") visual.layout = { ...visual.layout, x: first.x + index * visual.layout.w, y: first.y };
+          if (input.arrangement === "column") visual.layout = { ...visual.layout, x: first.x, y: first.y + index * visual.layout.h };
+        });
+        return;
+      }
       throw new Error(`unsupported_compose: ${input.action}`);
     }, expectedRevision);
     return { revision: scene.revision };
