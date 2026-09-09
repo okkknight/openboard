@@ -159,6 +159,12 @@ export interface ComposeInput {
   arrangement?: "row" | "column" | "grid" | "compact";
 }
 
+export interface HistoryApplyInput {
+  action: "undo" | "redo" | "checkpoint" | "goto" | "fork";
+  revision?: number;
+  label?: string;
+}
+
 export interface CompiledQuery {
   sql: string;
   params: JsonPrimitive[];

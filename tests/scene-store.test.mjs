@@ -95,3 +95,12 @@ test("create, compose, and annotate each commit one scene revision", () => {
   assert.equal(annotated.revision, 3);
   assert.equal(store.inspect().annotations.a1.text, "Investigate this");
 });
+
+test("history apply returns an earlier immutable scene snapshot", () => {
+  const store = new SceneStore(seed());
+  store.patchVisual("v1", { set: { title: "One" } });
+  store.patchVisual("v1", { set: { title: "Two" } });
+  const result = store.applyHistory({ action: "goto", revision: 1 });
+  assert.equal(result.revision, 1);
+  assert.equal(store.inspect().visuals.v1.title, "One");
+});

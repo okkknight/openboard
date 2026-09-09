@@ -1,5 +1,5 @@
 import { HistoryStore } from "./history-store.js";
-import type { AnnotationSpec, ComposeInput, HistoryRecord, JsonValue, Scene, VisualPatch, VisualSpec } from "./types.js";
+import type { AnnotationSpec, ComposeInput, HistoryApplyInput, HistoryRecord, JsonValue, Scene, VisualPatch, VisualSpec } from "./types.js";
 
 export interface VisualMutationResult {
   revision: number;
@@ -190,5 +190,19 @@ export class SceneStore {
 
   historyRecords(): HistoryRecord[] {
     return this.#history.records();
+  }
+
+  applyHistory(input: HistoryApplyInput): SceneMutationResult {
+    const revisions = this.#history.revisions();
+    const currentIndex = revisions.indexOf(this.#scene.revision);
+    let revision: number | undefined;
+    if (input.action === "goto") revision = input.revision;
+    if (input.action === "undo") revision = revisions[currentIndex - 1];
+    if (input.action === "redo") revision = revisions[currentIndex + 1];
+    if (input.action === "checkpoint") return { revision: this.#scene.revision };
+    if (input.action === "fork") return { revision: this.#scene.revision };
+    if (revision === undefined) throw new Error(`history_not_found: ${input.action}`);
+    this.#scene = this.#history.snapshotAt(revision);
+    return { revision: this.#scene.revision };
   }
 }

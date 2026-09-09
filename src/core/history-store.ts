@@ -28,4 +28,8 @@ export class HistoryStore {
     if (!snapshot) throw new Error(`history_not_found: ${revision}`);
     return clone(snapshot);
   }
+
+  revisions(): number[] {
+    return [...this.#snapshots.keys()].sort((left, right) => left - right);
+  }
 }
