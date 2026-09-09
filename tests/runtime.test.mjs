@@ -46,3 +46,14 @@ test("inspects and queries registered data without creating a visual", async () 
   assert.equal(result.observation.row_count, 4);
   runtime.close();
 });
+
+test("clones a visual and persists compose and annotation mutations", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "scene", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 1, h: 1 } });
+  const clone = await runtime.visualClone("v1", "v2");
+  assert.equal(clone.result.visual.derived_from, "v1");
+  await runtime.canvasCompose({ action: "focus", target: "v2" });
+  await runtime.canvasAnnotate({ id: "a1", target: "v2", text: "Compare", created_at: "2026-09-09T00:00:00.000Z" });
+  assert.equal(runtime.inspect().revision, 4);
+  runtime.close();
+});

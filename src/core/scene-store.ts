@@ -93,6 +93,16 @@ export class SceneStore {
     return applyPatch(visual, patch);
   }
 
+  previewClone(id: string, newId: string, patch?: VisualPatch): VisualSpec {
+    const source = this.#scene.visuals[id];
+    if (!source) throw new Error(`not_found: visual ${id}`);
+    if (this.#scene.visuals[newId]) throw new Error(`already_exists: visual ${newId}`);
+    const visual = clone(source);
+    visual.id = newId;
+    visual.derived_from = id;
+    return patch ? applyPatch(visual, patch) : visual;
+  }
+
   #assertRevision(expectedRevision?: number): void {
     if (expectedRevision !== undefined && expectedRevision !== this.#scene.revision) {
       throw new Error(`revision_conflict: expected ${expectedRevision}, actual ${this.#scene.revision}`);

@@ -1,7 +1,7 @@
 import { observe, type Observation } from "../core/observation.js";
 import { compileQuery } from "../core/query-compiler.js";
 import { SceneStore } from "../core/scene-store.js";
-import type { DatasetSpec, JsonObject, QuerySpec, Scene, VisualPatch, VisualSpec } from "../core/types.js";
+import type { AnnotationSpec, ComposeInput, DatasetSpec, JsonObject, QuerySpec, Scene, VisualPatch, VisualSpec } from "../core/types.js";
 import { DuckDbEngine } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
@@ -59,6 +59,30 @@ export class DataCanvasRuntime {
     const response = this.#response(mutation.visual, mutation.revision, payload);
     this.#events.emit({ type: "visual.changed", canvas_id: response.canvas_id, revision: response.revision, visual_id: id });
     return response;
+  }
+
+  async visualClone(id: string, newId: string, patch?: VisualPatch, expectedRevision?: number): Promise<RuntimeResult> {
+    const preview = this.#store.previewClone(id, newId, patch);
+    const payload = await this.#render(preview);
+    const mutation = this.#store.cloneVisual(id, newId, patch, expectedRevision);
+    await this.#persist();
+    const response = this.#response(mutation.visual, mutation.revision, payload);
+    this.#events.emit({ type: "visual.created", canvas_id: response.canvas_id, revision: response.revision, visual_id: newId });
+    return response;
+  }
+
+  async canvasCompose(input: ComposeInput, expectedRevision?: number): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+    const mutation = this.#store.compose(input, expectedRevision);
+    await this.#persist();
+    const scene = this.#store.inspect();
+    return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
+  }
+
+  async canvasAnnotate(annotation: AnnotationSpec, expectedRevision?: number): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+    const mutation = this.#store.annotate(annotation, expectedRevision);
+    await this.#persist();
+    const scene = this.#store.inspect();
+    return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
   }
 
   async #render(visual: VisualSpec): Promise<{ rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation }> {

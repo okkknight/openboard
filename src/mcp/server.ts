@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
-import type { QuerySpec, VisualPatch, VisualSpec } from "../core/types.js";
+import type { AnnotationSpec, ComposeInput, QuerySpec, VisualPatch, VisualSpec } from "../core/types.js";
 
 export const TOOL_NAMES = [
   "canvas.inspect", "data.inspect", "data.query", "visual.create", "visual.patch",
@@ -33,6 +33,9 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
       }
       if (name === "visual.create") return textResult(await runtime.visualCreate(request as unknown as VisualSpec, request.expected_revision as number | undefined));
       if (name === "visual.patch") return textResult(await runtime.visualPatch(String(request.id), request.patch as VisualPatch, request.expected_revision as number | undefined));
+      if (name === "visual.clone") return textResult(await runtime.visualClone(String(request.id), String(request.new_id), request.patch as VisualPatch | undefined, request.expected_revision as number | undefined));
+      if (name === "canvas.compose") return textResult(await runtime.canvasCompose(request as unknown as ComposeInput, request.expected_revision as number | undefined));
+      if (name === "canvas.annotate") return textResult(await runtime.canvasAnnotate(request as unknown as AnnotationSpec, request.expected_revision as number | undefined));
       const scene = runtime.inspect();
       return textResult({ status: "error", canvas_id: scene.canvas_id, revision: scene.revision, error: { code: "not_implemented", message: `${name} is not wired yet` } });
     });
