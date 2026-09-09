@@ -9,5 +9,5 @@
     "rootDir": "src",
     "skipLibCheck": true
   },
-  "include": ["src/core/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }
