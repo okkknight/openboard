@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HistoryRecord, Scene } from "../core/types.js";
 
@@ -54,6 +54,17 @@ export class Persistence {
     try { return JSON.parse(await readFile(join(this.#stateDirectory, "snapshots", `${revision}.json`), "utf8")) as Scene; }
     catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  async listSnapshotRevisions(): Promise<number[]> {
+    try {
+      return (await readdir(join(this.#stateDirectory, "snapshots")))
+        .map((name) => Number(name.replace(/\.json$/, "")))
+        .filter(Number.isInteger).sort((left, right) => left - right);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
   }
