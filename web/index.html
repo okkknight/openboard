@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>OpenBoard</title></head>
+<body><main><h1>OpenBoard</h1><p id="connection">Connecting…</p><pre id="scene"></pre></main>
+<script type="module">
+const scene = await fetch('/api/scene').then(r => r.json());
+document.querySelector('#connection').textContent = 'Connected';
+document.querySelector('#scene').textContent = JSON.stringify(scene, null, 2);
+</script></body></html>
