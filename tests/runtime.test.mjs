@@ -37,3 +37,12 @@ test("persists a committed visual scene before returning", async () => {
     runtime.close();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("inspects and queries registered data without creating a visual", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "data", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  const profile = await runtime.dataInspect("orders");
+  assert.equal(profile.row_count, 20);
+  const result = await runtime.dataQuery("orders", { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] });
+  assert.equal(result.observation.row_count, 4);
+  runtime.close();
+});

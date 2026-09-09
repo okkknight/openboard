@@ -1,7 +1,7 @@
 import { observe, type Observation } from "../core/observation.js";
 import { compileQuery } from "../core/query-compiler.js";
 import { SceneStore } from "../core/scene-store.js";
-import type { JsonObject, Scene, VisualPatch, VisualSpec } from "../core/types.js";
+import type { DatasetSpec, JsonObject, QuerySpec, Scene, VisualPatch, VisualSpec } from "../core/types.js";
 import { DuckDbEngine } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
@@ -27,6 +27,21 @@ export class DataCanvasRuntime {
   inspect(): Scene { return this.#store.inspect(); }
   close(): void { this.#engine.close(); }
 
+  async dataInspect(id: string): Promise<DatasetSpec> {
+    return this.#engine.inspect(this.#dataset(id));
+  }
+
+  async dataQuery(id: string, query: QuerySpec): Promise<{ columns: string[]; data: JsonObject[]; observation: Observation }> {
+    const dataset = this.#dataset(id);
+    const profile = await this.#engine.inspect(dataset);
+    const result = query.sql
+      ? await this.#engine.queryRaw(dataset, query.sql)
+      : await this.#engine.query(dataset, compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], query));
+    const numericFields = (query.measures ?? []).map((measure) => measure.alias);
+    const categoryFields = (query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
+    return { columns: result.columns, data: result.rows, observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
+  }
+
   async visualCreate(visual: VisualSpec, expectedRevision?: number): Promise<RuntimeResult> {
     const payload = await this.#render(visual);
     const mutation = this.#store.createVisual(visual, expectedRevision);
@@ -47,14 +62,19 @@ export class DataCanvasRuntime {
   }
 
   async #render(visual: VisualSpec): Promise<{ rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation }> {
-    const dataset = this.#store.inspect().datasets[visual.source];
-    if (!dataset) throw new Error(`not_found: dataset ${visual.source}`);
+    const dataset = this.#dataset(visual.source);
     const profile = await this.#engine.inspect(dataset);
     const query = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], visual.query);
     const result = await this.#engine.query(dataset, query);
     const numericFields = (visual.query.measures ?? []).map((measure) => measure.alias);
     const categoryFields = (visual.query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
     return { rows: result.rows, columns: result.columns, plot: compilePlot(visual, result.rows), observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
+  }
+
+  #dataset(id: string): DatasetSpec {
+    const dataset = this.#store.inspect().datasets[id];
+    if (!dataset) throw new Error(`not_found: dataset ${id}`);
+    return dataset;
   }
 
   #response(visual: VisualSpec, revision: number, payload: { rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation }): RuntimeResult {
