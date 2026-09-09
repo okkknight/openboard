@@ -14,6 +14,7 @@ test("persists scene atomically and appends operation history as JSONL", async (
     await persistence.saveScene(scene);
     await persistence.appendHistory({ revision: 3, parent_revision: 2, operation: "visual.patch", input: {}, timestamp: "2026-09-09T00:00:00.000Z" });
     assert.deepEqual(await persistence.loadScene(), scene);
+    assert.equal((await persistence.loadHistory())[0].operation, "visual.patch");
     assert.match(await readFile(join(root, ".datacanvas", "history.jsonl"), "utf8"), /visual.patch/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

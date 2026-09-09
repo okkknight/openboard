@@ -30,4 +30,14 @@ export class Persistence {
     await mkdir(this.#stateDirectory, { recursive: true });
     await appendFile(join(this.#stateDirectory, "history.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
   }
+
+  async loadHistory(): Promise<HistoryRecord[]> {
+    try {
+      return (await readFile(join(this.#stateDirectory, "history.jsonl"), "utf8"))
+        .split("\n").filter(Boolean).map((line) => JSON.parse(line) as HistoryRecord);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
 }
