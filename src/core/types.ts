@@ -140,6 +140,25 @@ export interface VisualPatch {
   remove_marks?: string[];
 }
 
+export interface HistoryRecord {
+  revision: number;
+  parent_revision: number | null;
+  operation: string;
+  target?: string;
+  input: JsonValue;
+  timestamp: string;
+}
+
+export type ComposeAction = "move" | "resize" | "delete" | "focus" | "group" | "ungroup" | "arrange";
+
+export interface ComposeInput {
+  action: ComposeAction;
+  target?: string;
+  targets?: string[];
+  layout?: LayoutSpec;
+  arrangement?: "row" | "column" | "grid" | "compact";
+}
+
 export interface CompiledQuery {
   sql: string;
   params: JsonPrimitive[];

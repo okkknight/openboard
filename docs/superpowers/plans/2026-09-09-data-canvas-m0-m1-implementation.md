@@ -6,7 +6,7 @@
 
 **Architecture:** Keep a dependency-light core SceneStore and contract layer independent from adapters. DuckDB compiles QuerySpec to safe read-only SQL; Observable Plot renders mark-based VisualSpecs; an MCP adapter exposes exactly nine tools; a WebSocket event stream keeps the browser synchronized with scene revisions.
 
-**Tech Stack:** Node.js 22+, TypeScript 5.8+, `@duckdb/node-api` 1.5.x, `@modelcontextprotocol/server` 2.x, Zod 4.x, `@observablehq/plot` 0.6.x, browser WebSocket, JSON/JSONL.
+**Tech Stack:** Node.js 22+, TypeScript 5.8+, `@duckdb/node-api` 1.5.5-r.4, `@modelcontextprotocol/server` 2.x, Zod 4.x, `@observablehq/plot` 0.6.x, browser WebSocket, JSON/JSONL.
 
 **Spec:** `docs/superpowers/specs/2026-09-09-data-canvas-v1-design.md`
 

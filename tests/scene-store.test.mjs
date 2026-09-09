@@ -74,3 +74,24 @@ test("adding duplicate mark id is rejected", () => {
     /duplicate_mark/
   );
 });
+
+test("create, compose, and annotate each commit one scene revision", () => {
+  const store = new SceneStore(seed());
+  const created = store.createVisual({
+    id: "v2",
+    kind: "plot",
+    source: "orders",
+    query: {},
+    marks: [],
+    layout: { x: 500, y: 0, w: 480, h: 320 }
+  }, 0);
+  assert.equal(created.revision, 1);
+
+  const composed = store.compose({ action: "focus", target: "v2" }, 1);
+  assert.equal(composed.revision, 2);
+  assert.equal(store.inspect().canvas.focus, "v2");
+
+  const annotated = store.annotate({ id: "a1", target: "v2", text: "Investigate this", created_at: "2026-09-09T00:00:00.000Z" }, 2);
+  assert.equal(annotated.revision, 3);
+  assert.equal(store.inspect().annotations.a1.text, "Investigate this");
+});

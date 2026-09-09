@@ -14,7 +14,7 @@
     "test": "npm run test:core"
   },
   "dependencies": {
-    "@duckdb/node-api": "1.5.5",
+    "@duckdb/node-api": "1.5.5-r.4",
     "@modelcontextprotocol/server": "2.0.0",
     "@observablehq/plot": "0.6.17",
     "zod": "4.5.4"

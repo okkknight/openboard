@@ -440,7 +440,7 @@ Codex is the operator. The browser is primarily the live viewport.
 
 - Node.js 22+
 - TypeScript 5.8+
-- `@duckdb/node-api` 1.5.x Node Neo client
+- `@duckdb/node-api` 1.5.5-r.4 Node Neo client
 - MCP SDK v2 split server package (`@modelcontextprotocol/server`)
 - Zod v4
 - Observable Plot 0.6.x
@@ -449,7 +449,7 @@ Codex is the operator. The browser is primarily the live viewport.
 
 Upstream facts verified 2026-09-09:
 
-- DuckDB Node Neo is the recommended primary Node client and stable line is 1.5.5: https://duckdb.org/docs/lts/clients/node_neo/overview
+- DuckDB Node Neo is the recommended primary Node client; this package pins the available 1.5.5-r.4 release: https://duckdb.org/docs/lts/clients/node_neo/overview
 - MCP TypeScript SDK v2 is the stable release line for the 2026-07-28 protocol and uses `@modelcontextprotocol/server`: https://ts.sdk.modelcontextprotocol.io/v2/
 - Observable Plot uses layered marks rather than chart types: https://observablehq.com/plot/
 
