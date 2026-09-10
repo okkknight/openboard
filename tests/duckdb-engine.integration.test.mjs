@@ -25,5 +25,7 @@ test("inspects a CSV and executes a parameterized structured query", async () =>
 test("rejects mutating raw SQL", async () => {
   const engine = new DuckDbEngine();
   await assert.rejects(() => engine.queryRaw(orders, "DELETE FROM orders"), /query_rejected/);
+  await assert.rejects(() => engine.queryRaw(orders, "SELECT * FROM orders; DELETE FROM orders"), /query_rejected/);
+  await assert.rejects(() => engine.queryRaw(orders, "-- explain\nCREATE TABLE bad(x int)"), /query_rejected/);
   engine.close();
 });

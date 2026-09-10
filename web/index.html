@@ -1,9 +1,139 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>OpenBoard</title></head>
-<body><main><h1>OpenBoard</h1><p id="connection">Connecting…</p><section id="canvas"></section></main>
-<script src="/assets/plot.js"></script><script type="module">
-const canvas = document.querySelector('#canvas');
-async function render(id) { const payload = await fetch('/api/visual/' + encodeURIComponent(id)).then(r => r.json()); const card = document.querySelector(`[data-visual="${id}"]`) || document.createElement('article'); card.dataset.visual = id; card.replaceChildren(Object.assign(document.createElement('h2'), {textContent: payload.result.visual.title || id}), Plot.plot({width: payload.result.visual.layout.w, height: payload.result.visual.layout.h, marks: payload.result.plot.marks.map(mark => Plot[mark.type](payload.result.plot.data, mark.options))})); canvas.append(card); }
-const scene = await fetch('/api/scene').then(r => r.json()); await Promise.all(Object.keys(scene.visuals).map(render));
-const socket = new WebSocket(`ws://${location.host}/ws`); socket.onopen = () => document.querySelector('#connection').textContent = 'Connected'; socket.onmessage = async ({data}) => { const event = JSON.parse(data); if (event.visual_id) await render(event.visual_id); };
-</script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenBoard — Data Canvas</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0d1117; --panel: #151b24; --panel-2: #1b2430; --line: #2b3645; --muted: #9aa8ba; --text: #edf3fb; --accent: #6bd8c4; --focus: #f6c86e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 960px; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    header { height: 64px; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(13,17,23,.94); position: sticky; top: 0; z-index: 5; }
+    .brand { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
+    .eyebrow { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+    .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #d66b72; }
+    .status.connected::before { background: var(--accent); }
+    .spacer { flex: 1; }
+    button { border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--text); padding: 7px 12px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .revision { color: var(--muted); font-variant-numeric: tabular-nums; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: calc(100vh - 64px); }
+    #viewport { position: relative; overflow: auto; background: radial-gradient(circle at 1px 1px, #202b38 1px, transparent 0) 0 0 / 24px 24px; }
+    #board { position: relative; min-width: 1200px; min-height: 900px; transform-origin: 0 0; }
+    .visual-card { position: absolute; overflow: hidden; min-width: 260px; min-height: 180px; border: 1px solid var(--line); border-radius: 12px; background: rgba(21,27,36,.97); box-shadow: 0 14px 30px rgba(0,0,0,.22); transition: border-color .15s, box-shadow .15s; }
+    .visual-card.is-focused { border-color: var(--focus); box-shadow: 0 0 0 2px rgba(246,200,110,.24), 0 14px 30px rgba(0,0,0,.28); }
+    .visual-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+    .visual-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .visual-id { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace; }
+    .plot { display: grid; place-items: center; min-height: 140px; padding: 8px; }
+    .plot svg { max-width: 100%; height: auto; }
+    .plot table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .plot th, .plot td { padding: 5px 7px; border-bottom: 1px solid var(--line); text-align: left; }
+    .plot th { color: var(--muted); font-weight: 600; }
+    .kpi-value { font-size: 38px; font-weight: 700; color: var(--accent); }
+    .visual-error { margin: 22px; color: #f39a9f; }
+    aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px; }
+    aside h1 { margin: 0 0 6px; font-size: 14px; }
+    aside p { margin: 0 0 18px; color: var(--muted); }
+    .annotation { padding: 10px 0; border-top: 1px solid var(--line); }
+    .annotation strong { display: block; color: var(--focus); font-size: 12px; margin-bottom: 3px; }
+    #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">OpenBoard</span><span class="eyebrow">Data Canvas</span>
+    <span id="connection" class="status">Connecting…</span><span class="spacer"></span>
+    <span id="revision" class="revision" data-testid="revision">Revision 0</span>
+    <button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
+  </header>
+  <main>
+    <section id="viewport" aria-label="Data canvas viewport"><div id="board"></div><div id="empty">No visuals yet. Ask Codex to paint the first view.</div></section>
+    <aside aria-label="Canvas details"><h1>Canvas details</h1><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
+  </main>
+  <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
+  <script type="module">
+    const board = document.querySelector('#board');
+    const viewport = document.querySelector('#viewport');
+    const empty = document.querySelector('#empty');
+    const connection = document.querySelector('#connection');
+    const revision = document.querySelector('#revision');
+    const canvasMeta = document.querySelector('#canvas-meta');
+    const annotations = document.querySelector('#annotations');
+    let scene = null;
+    let zoom = 1;
+
+    const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
+    const cardFor = (id) => board.querySelector(`[data-visual="${CSS.escape(id)}"]`);
+    const applyLayout = (card, layout) => { card.style.left = `${layout.x}px`; card.style.top = `${layout.y}px`; card.style.width = `${layout.w}px`; card.style.height = `${layout.h}px`; };
+    const markToPlot = (mark, data) => {
+      const factory = Plot[mark.type];
+      if (typeof factory !== 'function') throw new Error(`unsupported mark ${mark.type}`);
+      return factory(data, mark.options || {});
+    };
+    const plotData = (rows) => rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) ? new Date(value) : value])));
+
+    async function render(id) {
+      const response = await fetch('/api/visual/' + encodeURIComponent(id));
+      if (!response.ok) throw new Error(`visual ${id} unavailable`);
+      const payload = await response.json();
+      const visual = payload.result.visual;
+      if (scene && Number.isInteger(payload.revision) && payload.revision >= scene.revision) { scene.revision = payload.revision; revision.textContent = `Revision ${scene.revision}`; }
+      let card = cardFor(id);
+      if (!card) {
+        card = document.createElement('article'); card.className = 'visual-card'; card.dataset.visual = id;
+        const head = document.createElement('div'); head.className = 'visual-head';
+        const title = document.createElement('span'); title.className = 'visual-title';
+        const visualId = document.createElement('span'); visualId.className = 'visual-id'; visualId.textContent = id;
+        head.append(title, visualId); card.append(head, Object.assign(document.createElement('div'), { className: 'plot' })); board.append(card);
+      }
+      card.querySelector('.visual-title').textContent = visual.title || id;
+      applyLayout(card, visual.layout);
+      const plot = card.querySelector('.plot');
+      try {
+        const renderRows = plotData(payload.result.plot.data);
+        if (visual.kind === 'table') {
+          const table = document.createElement('table'); const fields = payload.result.columns;
+          const head = document.createElement('tr'); fields.forEach((field) => head.append(Object.assign(document.createElement('th'), { textContent: field }))); const thead = document.createElement('thead'); thead.append(head); table.append(thead);
+          const body = document.createElement('tbody'); payload.result.plot.data.forEach((row) => { const tr = document.createElement('tr'); fields.forEach((field) => tr.append(Object.assign(document.createElement('td'), { textContent: row[field] == null ? '' : String(row[field]) }))); body.append(tr); }); table.append(body); plot.replaceChildren(table);
+        } else if (visual.kind === 'kpi') {
+          const first = payload.result.plot.data[0] || {}; const value = Object.values(first)[0] ?? payload.result.rows;
+          plot.replaceChildren(Object.assign(document.createElement('div'), { className: 'kpi-value', textContent: String(value) }));
+        } else {
+          plot.replaceChildren(Plot.plot({ width: Math.max(220, visual.layout.w - 16), height: Math.max(120, visual.layout.h - 48), margin: 32, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) }));
+        }
+      } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
+      card.classList.toggle('is-focused', scene?.canvas?.focus === id);
+      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+    }
+
+    function updateScene(next) {
+      scene = next; revision.textContent = `Revision ${scene.revision}`;
+      canvasMeta.textContent = `${Object.keys(scene.visuals).length} visual${Object.keys(scene.visuals).length === 1 ? '' : 's'} · ${Object.keys(scene.datasets).length} dataset${Object.keys(scene.datasets).length === 1 ? '' : 's'}`;
+      annotations.replaceChildren(...Object.values(scene.annotations).map((annotation) => { const item = document.createElement('div'); item.className = 'annotation'; item.innerHTML = '<strong>Note</strong>'; item.append(document.createTextNode(annotation.text)); return item; }));
+      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visual.layout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
+    }
+
+    async function reloadScene() {
+      updateScene(await fetch('/api/scene').then((response) => response.json()));
+      for (const card of board.querySelectorAll('.visual-card')) if (!scene.visuals[card.dataset.visual]) card.remove();
+      await Promise.all(Object.keys(scene.visuals).map(render));
+      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+    }
+    document.querySelector('#fit').addEventListener('click', () => { const cards = [...board.querySelectorAll('.visual-card')]; if (!cards.length) return; const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width))); const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height))); zoom = Math.min(1, (viewport.clientWidth - 48) / right, (viewport.clientHeight - 48) / bottom); board.style.transform = `scale(${zoom})`; });
+    document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
+    await reloadScene();
+    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    socket.addEventListener('open', () => setConnection('Connected', true));
+    socket.addEventListener('close', () => setConnection('Disconnected', false));
+    socket.addEventListener('error', () => setConnection('Connection error', false));
+    socket.addEventListener('message', async ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; }
+      else if (event.visual_id) await render(event.visual_id);
+      if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();
+    });
+  </script>
+</body>
+</html>

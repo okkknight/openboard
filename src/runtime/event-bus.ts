@@ -1,8 +1,11 @@
 export interface SceneEvent {
-  type: "visual.created" | "visual.changed";
+  type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed";
   canvas_id: string;
   revision: number;
-  visual_id: string;
+  visual_id?: string;
+  annotation_id?: string;
+  affected_ids?: string[];
+  payload?: Record<string, unknown>;
 }
 
 export class EventBus {

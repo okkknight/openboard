@@ -18,3 +18,16 @@ test("persists scene atomically and appends operation history as JSONL", async (
     assert.match(await readFile(join(root, ".datacanvas", "history.jsonl"), "utf8"), /visual.patch/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("persists revision snapshots and lineage metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openboard-state-snapshots-"));
+  try {
+    const persistence = new Persistence(root);
+    const snapshot = { ...scene, revision: 4 };
+    await persistence.saveSnapshot(snapshot);
+    await persistence.saveMetadata({ checkpoints: { baseline: 4 }, forks: [{ branch_id: "test/fork/4", parent_revision: 4, created_at: "2026-09-10T00:00:00.000Z" }] });
+    assert.deepEqual(await persistence.loadSnapshot(4), snapshot);
+    assert.deepEqual(await persistence.listSnapshotRevisions(), [4]);
+    assert.deepEqual(await persistence.loadMetadata(), { checkpoints: { baseline: 4 }, forks: [{ branch_id: "test/fork/4", parent_revision: 4, created_at: "2026-09-10T00:00:00.000Z" }] });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

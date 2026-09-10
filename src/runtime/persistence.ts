@@ -1,6 +1,12 @@
-import { appendFile, mkdir, open, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
+import type { HistoryFork } from "../core/history-store.js";
 import type { HistoryRecord, Scene } from "../core/types.js";
+
+export interface PersistenceMetadata {
+  checkpoints: Record<string, number>;
+  forks: HistoryFork[];
+}
 
 export class Persistence {
   #stateDirectory: string;
@@ -46,7 +52,11 @@ export class Persistence {
     await mkdir(snapshots, { recursive: true });
     const destination = join(snapshots, `${scene.revision}.json`);
     const temporary = `${destination}.tmp`;
-    await writeFile(temporary, JSON.stringify(scene));
+    const file = await open(temporary, "w");
+    try {
+      await file.writeFile(`${JSON.stringify(scene)}\n`);
+      await file.sync();
+    } finally { await file.close(); }
     await rename(temporary, destination);
   }
 
@@ -65,6 +75,28 @@ export class Persistence {
         .filter(Number.isInteger).sort((left, right) => left - right);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  async saveMetadata(metadata: PersistenceMetadata): Promise<void> {
+    await mkdir(this.#stateDirectory, { recursive: true });
+    const finalPath = join(this.#stateDirectory, "metadata.json");
+    const temporaryPath = `${finalPath}.tmp`;
+    const file = await open(temporaryPath, "w");
+    try {
+      await file.writeFile(`${JSON.stringify(metadata, null, 2)}\n`);
+      await file.sync();
+    } finally { await file.close(); }
+    await rename(temporaryPath, finalPath);
+  }
+
+  async loadMetadata(): Promise<PersistenceMetadata> {
+    try {
+      const parsed = JSON.parse(await readFile(join(this.#stateDirectory, "metadata.json"), "utf8")) as Partial<PersistenceMetadata>;
+      return { checkpoints: parsed.checkpoints ?? {}, forks: parsed.forks ?? [] };
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { checkpoints: {}, forks: [] };
       throw error;
     }
   }

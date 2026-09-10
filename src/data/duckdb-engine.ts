@@ -6,6 +6,17 @@ export interface QueryResult {
   rows: JsonObject[];
 }
 
+export interface InspectOptions {
+  fields?: string[];
+  top_k?: number;
+  sample_rows?: number;
+}
+
+export interface DatasetInspection extends DatasetSpec {
+  top_values: Record<string, Array<{ value: JsonValue; count: number }>>;
+  sample_rows: JsonObject[];
+}
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
@@ -16,7 +27,9 @@ function quoteString(value: string): string {
 
 function isReadOnly(sql: string): boolean {
   const normalized = sql.replaceAll(/--[^\n]*|\/\*[\s\S]*?\*\//g, "").trim().toUpperCase();
-  return /^(SELECT|WITH|DESCRIBE|SUMMARIZE|EXPLAIN)\b/.test(normalized);
+  if (!normalized) return false;
+  const statements = normalized.split(";").map((statement) => statement.trim()).filter(Boolean);
+  return statements.length > 0 && statements.every((statement) => /^(SELECT|WITH|DESCRIBE|SUMMARIZE|EXPLAIN)\b/.test(statement));
 }
 
 function jsonValue(value: unknown): JsonValue {
@@ -37,7 +50,7 @@ export class DuckDbEngine {
   #instance?: Promise<DuckDBInstance>;
   #connection?: Promise<DuckDBConnection>;
 
-  async inspect(dataset: DatasetSpec): Promise<DatasetSpec> {
+  async inspect(dataset: DatasetSpec, options: InspectOptions = {}): Promise<DatasetInspection> {
     const connection = await this.#getConnection();
     await this.#register(dataset);
     const description = await connection.run(`DESCRIBE ${quoteIdentifier(dataset.id)}`);
@@ -49,7 +62,21 @@ export class DuckDbEngine {
       type: String(row.column_type),
       nullable: String(row.null).toUpperCase() !== "NO"
     }));
-    return { ...dataset, row_count: Number(countRows[0].row_count), columns };
+    const knownFields = new Set(columns.map((column) => column.name));
+    const fields = options.fields ?? columns.map((column) => column.name);
+    if (fields.some((field) => !knownFields.has(field))) throw new Error(`unknown_column: ${fields.find((field) => !knownFields.has(field))}`);
+    const topK = options.top_k ?? 10;
+    const sampleRows = options.sample_rows ?? 5;
+    if (!Number.isInteger(topK) || topK < 1 || topK > 50) throw new Error("invalid_top_k");
+    if (!Number.isInteger(sampleRows) || sampleRows < 0 || sampleRows > 100) throw new Error("invalid_sample_rows");
+    const top_values: DatasetInspection["top_values"] = {};
+    for (const field of fields) {
+      const values = await connection.run(`SELECT ${quoteIdentifier(field)} AS "value", COUNT(*) AS "count" FROM ${quoteIdentifier(dataset.id)} GROUP BY 1 ORDER BY "count" DESC NULLS LAST LIMIT ${topK}`);
+      top_values[field] = (await values.getRowObjectsJS()).map((row) => ({ value: jsonValue(row.value), count: Number(row.count) }));
+    }
+    const sample = await connection.run(`SELECT * FROM ${quoteIdentifier(dataset.id)} LIMIT ${sampleRows}`);
+    const sample_rows = (await sample.getRowObjectsJS()).map((row) => jsonValue(row) as JsonObject);
+    return { ...dataset, row_count: Number(countRows[0].row_count), columns, top_values, sample_rows };
   }
 
   async query(dataset: DatasetSpec, compiled: CompiledQuery): Promise<QueryResult> {

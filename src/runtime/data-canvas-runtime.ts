@@ -1,8 +1,9 @@
 import { observe, type Observation } from "../core/observation.js";
-import { compileQuery } from "../core/query-compiler.js";
-import { SceneStore } from "../core/scene-store.js";
+import { assertRenderable, compileQuery } from "../core/query-compiler.js";
+import { SceneStore, type HistoryMutationResult } from "../core/scene-store.js";
+import type { HistoryStoreSeed } from "../core/history-store.js";
 import type { AnnotationSpec, ComposeInput, DatasetSpec, HistoryApplyInput, JsonObject, QuerySpec, Scene, VisualPatch, VisualSpec } from "../core/types.js";
-import { DuckDbEngine } from "../data/duckdb-engine.js";
+import { DuckDbEngine, type InspectOptions, type DatasetInspection } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
 import { Persistence } from "./persistence.js";
@@ -15,28 +16,38 @@ export interface RuntimeResult {
   observation: Observation;
 }
 
+export interface RuntimeOptions {
+  point_limit?: number;
+}
+
 export class DataCanvasRuntime {
   #store: SceneStore;
   #engine = new DuckDbEngine();
   #events = new EventBus();
   #persistence?: Persistence;
   #persistedHistoryLength = 0;
+  #pointLimit: number;
 
-  constructor(scene: Scene, persistence?: Persistence) { this.#store = new SceneStore(scene); this.#persistence = persistence; }
+  constructor(scene: Scene, persistence?: Persistence, historySeed?: HistoryStoreSeed, options: RuntimeOptions = {}) {
+    this.#store = new SceneStore(scene, historySeed);
+    this.#persistence = persistence;
+    this.#persistedHistoryLength = historySeed?.records?.length ?? 0;
+    this.#pointLimit = options.point_limit ?? 50_000;
+  }
   onEvent(listener: (event: SceneEvent) => void): () => void { return this.#events.on(listener); }
   inspect(): Scene { return this.#store.inspect(); }
+  pointLimit(): number { return this.#pointLimit; }
   close(): void { this.#engine.close(); }
 
-  async dataInspect(id: string): Promise<DatasetSpec> {
-    return this.#engine.inspect(this.#dataset(id));
+  async dataInspect(id: string, options: InspectOptions = {}): Promise<DatasetInspection> {
+    return this.#engine.inspect(this.#dataset(id), options);
   }
 
   async dataQuery(id: string, query: QuerySpec): Promise<{ columns: string[]; data: JsonObject[]; observation: Observation }> {
     const dataset = this.#dataset(id);
-    const profile = await this.#engine.inspect(dataset);
-    const result = query.sql
-      ? await this.#engine.queryRaw(dataset, query.sql)
-      : await this.#engine.query(dataset, compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], query));
+    const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
+    const compiled = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], query);
+    const result = query.sql ? await this.#engine.queryRaw(dataset, compiled.sql) : await this.#engine.query(dataset, compiled);
     const numericFields = (query.measures ?? []).map((measure) => measure.alias);
     const categoryFields = (query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
     return { columns: result.columns, data: result.rows, observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
@@ -81,6 +92,9 @@ export class DataCanvasRuntime {
     const mutation = this.#store.compose(input, expectedRevision);
     await this.#persist();
     const scene = this.#store.inspect();
+    if (input.action === "focus") this.#events.emit({ type: "focus.changed", canvas_id: scene.canvas_id, revision: mutation.revision, visual_id: input.target });
+    else if (input.action === "delete") this.#events.emit({ type: "visual.removed", canvas_id: scene.canvas_id, revision: mutation.revision, visual_id: input.target });
+    else this.#events.emit({ type: "layout.changed", canvas_id: scene.canvas_id, revision: mutation.revision, affected_ids: input.targets ?? (input.target ? [input.target] : []) });
     return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
   }
 
@@ -88,21 +102,25 @@ export class DataCanvasRuntime {
     const mutation = this.#store.annotate(annotation, expectedRevision);
     await this.#persist();
     const scene = this.#store.inspect();
+    this.#events.emit({ type: "annotation.created", canvas_id: scene.canvas_id, revision: mutation.revision, annotation_id: annotation.id });
     return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
   }
 
-  async historyApply(input: HistoryApplyInput): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+  async historyApply(input: HistoryApplyInput): Promise<{ status: "ok"; canvas_id: string; revision: number; result?: { checkpoint?: string; parent_revision?: number; branch_id?: string } }> {
     const mutation = this.#store.applyHistory(input);
     await this.#persist();
     const scene = this.#store.inspect();
-    return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
+    const result = this.#historyResult(mutation);
+    this.#events.emit({ type: "history.changed", canvas_id: scene.canvas_id, revision: mutation.revision });
+    return result ? { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision, result } : { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
   }
 
   async #render(visual: VisualSpec): Promise<{ rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation }> {
     const dataset = this.#dataset(visual.source);
-    const profile = await this.#engine.inspect(dataset);
+    const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
     const query = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], visual.query);
-    const result = await this.#engine.query(dataset, query);
+    const result = visual.query.sql ? await this.#engine.queryRaw(dataset, query.sql) : await this.#engine.query(dataset, query);
+    assertRenderable(result.rows.length, this.#pointLimit, visual.query.sample);
     const numericFields = (visual.query.measures ?? []).map((measure) => measure.alias);
     const categoryFields = (visual.query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
     return { rows: result.rows, columns: result.columns, plot: compilePlot(visual, result.rows), observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
@@ -123,8 +141,17 @@ export class DataCanvasRuntime {
     const scene = this.#store.inspect();
     await this.#persistence.saveScene(scene);
     await this.#persistence.saveSnapshot(scene);
+    await this.#persistence.saveMetadata({ checkpoints: this.#store.historyCheckpoints(), forks: this.#store.historyForks() });
     const records = this.#store.historyRecords();
     for (const record of records.slice(this.#persistedHistoryLength)) await this.#persistence.appendHistory(record);
     this.#persistedHistoryLength = records.length;
+  }
+
+  #historyResult(mutation: HistoryMutationResult): { checkpoint?: string; parent_revision?: number; branch_id?: string } | undefined {
+    const result: { checkpoint?: string; parent_revision?: number; branch_id?: string } = {};
+    if (mutation.checkpoint) result.checkpoint = mutation.checkpoint;
+    if (mutation.parent_revision !== undefined) result.parent_revision = mutation.parent_revision;
+    if (mutation.branch_id) result.branch_id = mutation.branch_id;
+    return Object.keys(result).length ? result : undefined;
   }
 }

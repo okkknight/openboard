@@ -6,17 +6,19 @@ OpenBoard is a lightweight local visualization runtime designed for AI agents su
 
 ## What this package contains
 
-This is a **contract-first Codex engineering package** for V1. It includes:
+This is the **local V1 runtime** for Data Canvas. It includes:
 
 - frozen product/architecture spec;
 - Scene, Query and Visual contracts;
 - the 9-tool MCP surface;
 - a TDD-oriented M0/M1 implementation plan;
-- a small tested core SceneStore scaffold;
+- a tested SceneStore, history/persistence layer, and deterministic observations;
+- DuckDB-backed QuerySpec/raw read-only query execution;
+- live spatial browser canvas with WebSocket updates;
 - sample CSV data and expected interaction traces;
 - Codex instructions and acceptance tests.
 
-The scaffold intentionally does **not** pretend to be the finished renderer. The implementation plan wires the core to DuckDB, Observable Plot, MCP and the browser runtime.
+The runtime keeps the durable Scene independent from disposable Plot output and never stores generated DOM/HTML in scene history.
 
 ## Frozen V1 stack
 
@@ -41,7 +43,7 @@ Read these in order:
 
 ## Core verification in this package
 
-After unpacking, install the pinned dependencies and verify the starter core:
+After unpacking, install the pinned dependencies and verify the runtime:
 
 ```bash
 npm install
@@ -50,7 +52,7 @@ npm run verify:core
 
 In an environment that already has TypeScript 5.8.3 available, `verify:core` can also run before dependency installation because the starter core itself does not import DuckDB/MCP/Plot.
 
-This verifies the SceneStore/QuerySpec starter behavior and contract files. See `PROJECT_STATUS.md`: the full M0 application is intentionally still the first implementation milestone in the plan.
+This validates the contracts, TypeScript build, core behavior, DuckDB integration, MCP adapter, persistence, WebSocket server, and M0/M1 workflow.
 
 ## Core rule
 

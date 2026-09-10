@@ -58,7 +58,7 @@ test("stale expected revision throws a revision_conflict", () => {
   const store = new SceneStore(seed());
   assert.throws(
     () => store.patchVisual("v1", { set: { title: "Changed" } }, 9),
-    /revision_conflict: expected 9, actual 0/
+    (error) => error.code === "revision_conflict" && error.expected_revision === 9 && error.actual_revision === 0
   );
 });
 
@@ -121,4 +121,46 @@ test("names a checkpoint and resolves it for goto", () => {
   store.patchVisual("v1", { set: { title: "Later" } });
   store.applyHistory({ action: "goto", label: "before-breakdown" });
   assert.equal(store.inspect().visuals.v1.title, "Checkpoint state");
+});
+
+test("arranges visuals in a deterministic grid and compact row", () => {
+  const store = new SceneStore(seed());
+  store.createVisual({ ...store.inspect().visuals.v1, id: "v2", layout: { x: 0, y: 0, w: 100, h: 80 } });
+  store.createVisual({ ...store.inspect().visuals.v1, id: "v3", layout: { x: 0, y: 0, w: 100, h: 80 } });
+  store.createVisual({ ...store.inspect().visuals.v1, id: "v4", layout: { x: 0, y: 0, w: 100, h: 80 } });
+  store.compose({ action: "arrange", targets: ["v1", "v2", "v3", "v4"], arrangement: "grid" });
+  const grid = store.inspect();
+  assert.deepEqual(
+    [grid.visuals.v1, grid.visuals.v2, grid.visuals.v3, grid.visuals.v4].map((visual) => [visual.layout.x, visual.layout.y]),
+    [[0, 0], [480, 0], [0, 320], [480, 320]]
+  );
+  store.compose({ action: "arrange", targets: ["v1", "v2", "v3", "v4"], arrangement: "compact" });
+  const compact = store.inspect();
+  assert.deepEqual([compact.visuals.v1.layout.x, compact.visuals.v2.layout.x, compact.visuals.v3.layout.x, compact.visuals.v4.layout.x], [0, 480, 960, 1440]);
+  assert.ok([compact.visuals.v1, compact.visuals.v2, compact.visuals.v3, compact.visuals.v4].every((visual) => visual.layout.y === 0));
+});
+
+test("keeps branch history navigable after editing an earlier revision", () => {
+  const store = new SceneStore(seed());
+  store.patchVisual("v1", { set: { title: "One" } });
+  store.patchVisual("v1", { set: { title: "Two" } });
+  store.applyHistory({ action: "goto", revision: 1 });
+  const branched = store.patchVisual("v1", { set: { title: "Branch" } });
+  assert.equal(branched.revision, 3);
+  assert.equal(store.applyHistory({ action: "undo" }).revision, 1);
+  assert.equal(store.inspect().visuals.v1.title, "One");
+  assert.equal(store.applyHistory({ action: "redo" }).revision, 3);
+  assert.equal(store.inspect().visuals.v1.title, "Branch");
+});
+
+test("supports the complete spatial compose operation set", () => {
+  const store = new SceneStore(seed());
+  store.createVisual({ ...store.inspect().visuals.v1, id: "v2", layout: { x: 0, y: 0, w: 100, h: 100 } });
+  store.compose({ action: "move", target: "v2", layout: { x: 20, y: 30, w: 100, h: 100 } });
+  store.compose({ action: "resize", target: "v2", layout: { x: 20, y: 30, w: 200, h: 160 } });
+  store.compose({ action: "focus", target: "v2" });
+  assert.deepEqual(store.inspect().visuals.v2.layout, { x: 20, y: 30, w: 200, h: 160 });
+  assert.equal(store.inspect().canvas.focus, "v2");
+  store.compose({ action: "delete", target: "v2" });
+  assert.equal(store.inspect().visuals.v2, undefined);
 });

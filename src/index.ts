@@ -13,7 +13,12 @@ const sourceRoot = await access(dataRoot).then(() => dataRoot).catch(() => join(
 const persistence = new Persistence(root);
 const restored = await persistence.loadScene();
 const datasets = restored?.datasets ?? Object.fromEntries((await new DatasetRegistry().discover(sourceRoot)).map((dataset) => [dataset.id, dataset]));
-const runtime = new DataCanvasRuntime(restored ?? { canvas_id: "openboard", revision: 0, datasets, visuals: {}, annotations: {}, canvas: {} }, persistence);
+const seed = restored ? {
+  records: await persistence.loadHistory(),
+  snapshots: (await Promise.all((await persistence.listSnapshotRevisions()).map((revision) => persistence.loadSnapshot(revision)))).filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot)),
+  ...(await persistence.loadMetadata())
+} : undefined;
+const runtime = new DataCanvasRuntime(restored ?? { canvas_id: "openboard", revision: 0, datasets, visuals: {}, annotations: {}, canvas: {} }, persistence, seed);
 const web = await createWebServer(runtime, Number(process.env.OPENBOARD_PORT ?? 3000));
 const mcp = createMcpServer(runtime);
 await mcp.connect(new StdioServerTransport());

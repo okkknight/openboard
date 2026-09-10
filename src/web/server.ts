@@ -9,6 +9,7 @@ export interface RunningWebServer { port: number; close(): Promise<void>; }
 
 export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/index.html");
+  const d3Path = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/d3/dist/d3.min.js");
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
     if (request.url === "/api/scene") {
@@ -29,6 +30,12 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
       response.end(await readFile(plotPath));
       return;
     }
+    if (request.url === "/assets/d3.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(d3Path));
+      return;
+    }
+    if (request.url === "/favicon.ico") { response.writeHead(204).end(); return; }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(await readFile(indexPath));

@@ -17,3 +17,20 @@ test("summarizes numeric values, categories, and ordered change deterministicall
   assert.deepEqual(observation.categories.channel.top, [{ value: "B", count: 2 }, { value: "A", count: 1 }]);
   assert.deepEqual(observation.ordered.failure_rate, { first: 0.1, last: 0.2, absolute_change: 0.1, relative_change: 1 });
 });
+
+test("reports missing values, extrema keys, and Tukey outlier candidates", () => {
+  const observation = observe([
+    { day: "2026-01-01", value: 1, group: "A" },
+    { day: "2026-01-02", value: null, group: "A" },
+    { day: "2026-01-03", value: 2, group: "B" },
+    { day: "2026-01-04", value: 3, group: "B" },
+    { day: "2026-01-05", value: 4, group: "B" },
+    { day: "2026-01-06", value: 5, group: "B" },
+    { day: "2026-01-07", value: 6, group: "B" },
+    { day: "2026-01-08", value: 100, group: "B" }
+  ], { numericFields: ["value"], categoryFields: ["group"], orderField: "day" });
+  assert.equal(observation.missing.value, 1);
+  assert.deepEqual(observation.numeric.value.argmin, { value: 1, index: 0 });
+  assert.deepEqual(observation.numeric.value.argmax, { value: 100, index: 7 });
+  assert.deepEqual(observation.outliers, [{ field: "value", value: 100, index: 7, lower: -4, upper: 12 }]);
+});

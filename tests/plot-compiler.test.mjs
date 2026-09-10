@@ -24,3 +24,15 @@ test("compiles supported layered marks in input order", () => {
 test("rejects unsupported mark types instead of ignoring them", () => {
   assert.throws(() => compilePlot({ ...visual, marks: [{ id: "bad", type: "pie" }] }, []), /unsupported_visual_feature/);
 });
+
+test("keeps table and KPI payloads on the same disposable render contract", () => {
+  const rows = [{ channel: "A", orders: 3 }];
+  assert.deepEqual(compilePlot({ ...visual, kind: "table", marks: [] }, rows), { data: rows, marks: [] });
+  assert.deepEqual(compilePlot({ ...visual, kind: "kpi", marks: [] }, rows), { data: rows, marks: [] });
+});
+
+test("accepts every frozen initial mark type", () => {
+  const markTypes = ["barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell", "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY"];
+  const compiled = compilePlot({ ...visual, marks: markTypes.map((type, index) => ({ id: `m${index}`, type, x: "day", y: "value" })) }, [{ day: "2026-01-01", value: 1 }]);
+  assert.deepEqual(compiled.marks.map((mark) => mark.type), markTypes);
+});

@@ -1,49 +1,12 @@
-# Project status at handoff
+# OpenBoard 当前状态
 
-## Already implemented in this package
+OpenBoard 的 V1 M0/M1 已落地在 `main`：本地数据发现与 DuckDB 查询、Scene/历史持久化、九个 MCP 工具、Observable Plot 分层渲染、WebSocket 实时画布，以及真实浏览器验收均已接通。
 
-- frozen V1 design and non-goals;
-- JSON contracts for Scene, nine MCP tools, tool output envelope and live scene events;
-- sample CSV and interaction trace;
-- starter `SceneStore` with:
-  - in-place visual patch;
-  - visual clone + `derived_from`;
-  - revision conflict checks;
-  - immutable patch path guard;
-  - mark add/remove with duplicate-id guard;
-- starter QuerySpec compiler with:
-  - identifier quoting;
-  - filter value parameterization;
-  - common filters;
-  - time-grain dimensions;
-  - aggregate/raw-expression measures;
-  - sort and limit;
-  - raw SQL/structured-query exclusivity;
-- 9 passing core behavior tests in the packaged environment.
+主要入口：
 
-## Not implemented yet
+- `npm start`：启动本地 daemon，默认在 `http://127.0.0.1:3000` 提供画布。
+- `npm run verify:core`：合同校验、TypeScript 构建和全部核心/集成测试。
+- `examples/orders.csv`：默认示例数据。
+- `.datacanvas/`：运行时保存 scene、JSONL 操作、revision snapshots、checkpoint/fork 元数据；不保存 HTML/DOM。
 
-This package is **not** the finished M0 application. Codex should implement the plan from Task 1 onward, preserving tested starter behavior.
-
-Missing major pieces:
-
-- history persistence/checkpoint/fork semantics;
-- dataset discovery/profile cache;
-- DuckDB Node Neo adapter;
-- render-limit enforcement;
-- deterministic observation engine;
-- Observable Plot compiler;
-- runtime orchestration/event bus/persistence;
-- MCP v2 server registration;
-- browser spatial viewport + WebSocket updates;
-- M0/M1 end-to-end acceptance tests.
-
-## First recommended Codex action
-
-Run:
-
-```bash
-npm run verify:core
-```
-
-Then read the spec and implementation plan and start Task 1 under TDD.
+当前边界仍按 V1 设计冻结：本地单进程、只读数据查询、文本注释、Plot 分层 marks；不包含云同步、认证、BI 管理台、字段选择器或内嵌聊天。

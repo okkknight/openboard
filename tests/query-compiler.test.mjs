@@ -43,3 +43,11 @@ test("rejects an over-limit raw result unless the caller explicitly samples", ()
   );
   assert.doesNotThrow(() => assertRenderable(50_001, 50_000, { method: "reservoir", size: 20_000 }));
 });
+
+test("compiles explicit reservoir sampling into the query", () => {
+  const q = compileQuery("orders", ["channel"], {
+    dimensions: [{ field: "channel" }],
+    sample: { method: "reservoir", size: 10 }
+  });
+  assert.match(q.sql, /USING SAMPLE reservoir\(10 ROWS\)/i);
+});

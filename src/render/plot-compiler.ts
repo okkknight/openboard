@@ -11,10 +11,11 @@ export interface PlotConfig {
   marks: CompiledMark[];
 }
 
-const supportedMarks = new Set<MarkSpec["type"]>([
+export const SUPPORTED_MARKS: MarkSpec["type"][] = [
   "barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell",
   "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY"
-]);
+];
+const supportedMarks = new Set<MarkSpec["type"]>(SUPPORTED_MARKS);
 const supportedOptions = new Set(["curve", "fillOpacity", "strokeWidth", "r", "inset", "title"]);
 const channels = ["x", "y", "color", "fill", "stroke", "size", "text"] as const;
 
@@ -32,6 +33,7 @@ function asOptions(mark: MarkSpec): JsonObject {
 }
 
 export function compilePlot(visual: VisualSpec, rows: JsonObject[]): PlotConfig {
+  if (visual.kind === "table" || visual.kind === "kpi") return { data: structuredClone(rows), marks: [] };
   if (visual.kind !== "plot") throw new Error(`unsupported_visual_feature: kind ${visual.kind}`);
   return {
     data: structuredClone(rows),

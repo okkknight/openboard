@@ -1,4 +1,4 @@
-import { HistoryStore } from "./history-store.js";
+import { HistoryStore, type HistoryStoreSeed } from "./history-store.js";
 import type { AnnotationSpec, ComposeInput, HistoryApplyInput, HistoryRecord, JsonValue, Scene, VisualPatch, VisualSpec } from "./types.js";
 
 export interface VisualMutationResult {
@@ -8,6 +8,19 @@ export interface VisualMutationResult {
 
 export interface SceneMutationResult {
   revision: number;
+}
+
+export class RevisionConflictError extends Error {
+  readonly code = "revision_conflict";
+  constructor(readonly expected_revision: number, readonly actual_revision: number) {
+    super(`revision_conflict: expected ${expected_revision}, actual ${actual_revision}`);
+  }
+}
+
+export interface HistoryMutationResult extends SceneMutationResult {
+  checkpoint?: string;
+  parent_revision?: number;
+  branch_id?: string;
 }
 
 const IMMUTABLE_PATHS = new Set(["id", "derived_from", "marks"]);
@@ -78,9 +91,9 @@ export class SceneStore {
   #scene: Scene;
   #history: HistoryStore;
 
-  constructor(scene: Scene) {
+  constructor(scene: Scene, historySeed?: HistoryStoreSeed) {
     this.#scene = clone(scene);
-    this.#history = new HistoryStore(this.#scene);
+    this.#history = new HistoryStore(this.#scene, historySeed);
   }
 
   inspect(): Scene {
@@ -105,7 +118,7 @@ export class SceneStore {
 
   #assertRevision(expectedRevision?: number): void {
     if (expectedRevision !== undefined && expectedRevision !== this.#scene.revision) {
-      throw new Error(`revision_conflict: expected ${expectedRevision}, actual ${this.#scene.revision}`);
+      throw new RevisionConflictError(expectedRevision, this.#scene.revision);
     }
   }
 
@@ -113,7 +126,7 @@ export class SceneStore {
     this.#assertRevision(expectedRevision);
     const draft = clone(this.#scene);
     mutator(draft);
-    draft.revision = this.#scene.revision + 1;
+    draft.revision = this.#history.nextRevision();
     this.#history.append({
       ...operation,
       revision: draft.revision,
@@ -191,6 +204,21 @@ export class SceneStore {
         const visuals = input.targets.map((id) => draft.visuals[id]);
         if (visuals.some((visual) => !visual)) throw new Error("not_found: visual");
         const first = visuals[0].layout;
+        if (input.arrangement === "grid") {
+          const columns = Math.ceil(Math.sqrt(visuals.length));
+          visuals.forEach((visual, index) => {
+            const column = index % columns;
+            const row = Math.floor(index / columns);
+            visual.layout = { ...visual.layout, x: first.x + column * first.w, y: first.y + row * first.h };
+          });
+          return;
+        }
+        if (input.arrangement === "compact") {
+          visuals.forEach((visual, index) => {
+            visual.layout = { ...visual.layout, x: first.x + index * first.w, y: first.y };
+          });
+          return;
+        }
         visuals.forEach((visual, index) => {
           if (input.arrangement === "row") visual.layout = { ...visual.layout, x: first.x + index * visual.layout.w, y: first.y };
           if (input.arrangement === "column") visual.layout = { ...visual.layout, x: first.x, y: first.y + index * visual.layout.h };
@@ -215,19 +243,31 @@ export class SceneStore {
     return this.#history.records();
   }
 
-  applyHistory(input: HistoryApplyInput): SceneMutationResult {
-    const revisions = this.#history.revisions();
-    const currentIndex = revisions.indexOf(this.#scene.revision);
+  historyCheckpoints(): Record<string, number> {
+    return this.#history.checkpoints();
+  }
+
+  historyForks() {
+    return this.#history.forks();
+  }
+
+  applyHistory(input: HistoryApplyInput): HistoryMutationResult {
+    this.#assertRevision(input.expected_revision);
     let revision: number | undefined;
     if (input.action === "goto") revision = input.revision ?? (input.label ? this.#history.checkpointRevision(input.label) : undefined);
-    if (input.action === "undo") revision = revisions[currentIndex - 1];
-    if (input.action === "redo") revision = revisions[currentIndex + 1];
+    if (input.action === "undo") revision = this.#history.parentRevision(this.#scene.revision);
+    if (input.action === "redo") revision = this.#history.childRevisions(this.#scene.revision)[0];
     if (input.action === "checkpoint") {
       if (!input.label) throw new Error("invalid_checkpoint");
       this.#history.checkpoint(input.label, this.#scene.revision);
-      return { revision: this.#scene.revision };
+      return { revision: this.#scene.revision, checkpoint: input.label };
     }
-    if (input.action === "fork") return { revision: this.#scene.revision };
+    if (input.action === "fork") {
+      const parentRevision = input.revision ?? (input.label ? this.#history.checkpointRevision(input.label) : this.#scene.revision);
+      if (parentRevision === undefined) throw new Error("history_not_found: fork");
+      const fork = this.#history.fork(this.#scene.canvas_id, parentRevision);
+      return { revision: this.#scene.revision, parent_revision: fork.parent_revision, branch_id: fork.branch_id };
+    }
     if (revision === undefined) throw new Error(`history_not_found: ${input.action}`);
     this.#scene = this.#history.snapshotAt(revision);
     return { revision: this.#scene.revision };

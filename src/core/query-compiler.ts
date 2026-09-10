@@ -105,8 +105,11 @@ export function compileQuery(datasetTable: string, knownColumns: string[], spec:
   if (spec.sql) {
     if (hasStructured) throw new Error("mixed_raw_sql");
     if (spec.limit !== undefined && (!Number.isInteger(spec.limit) || spec.limit <= 0)) throw new Error("invalid_limit");
+    const sampleSize = validateSample(spec.sample);
+    const raw = spec.sql.trim();
+    const wrapped = sampleSize ? `SELECT * FROM (${raw}) AS ${quoteIdentifier("raw_query")} USING SAMPLE reservoir(${sampleSize} ROWS)` : raw;
     return {
-      sql: spec.limit ? `SELECT * FROM (${spec.sql}) AS ${quoteIdentifier("raw_query")} LIMIT ${spec.limit}` : spec.sql,
+      sql: spec.limit ? `SELECT * FROM (${wrapped}) AS ${quoteIdentifier("raw_query_limited")} LIMIT ${spec.limit}` : wrapped,
       params: [],
       projectedFields: [],
       requestedLimit: spec.limit
@@ -120,8 +123,12 @@ export function compileQuery(datasetTable: string, knownColumns: string[], spec:
   const select = [...dimensions.map((d) => d.sql), ...measures.map((m) => m.sql)];
   const projectedFields = [...dimensions.map((d) => d.projected), ...measures.map((m) => m.projected)];
   const where = (spec.filters ?? []).map((filter) => compileFilter(filter, known, params));
+  const sampleSize = validateSample(spec.sample);
 
-  let sql = `SELECT ${select.length ? select.join(", ") : "*"} FROM ${quoteIdentifier(datasetTable)}`;
+  const from = sampleSize
+    ? `(SELECT * FROM ${quoteIdentifier(datasetTable)} USING SAMPLE reservoir(${sampleSize} ROWS)) AS ${quoteIdentifier(`${datasetTable}_sample`)}`
+    : quoteIdentifier(datasetTable);
+  let sql = `SELECT ${select.length ? select.join(", ") : "*"} FROM ${from}`;
   if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
   if (dimensions.length) sql += ` GROUP BY ${dimensions.map((_, i) => i + 1).join(", ")}`;
 
@@ -140,4 +147,10 @@ export function compileQuery(datasetTable: string, knownColumns: string[], spec:
   }
 
   return { sql, params, projectedFields, requestedLimit: spec.limit };
+}
+
+function validateSample(sample: SampleSpec | undefined): number | undefined {
+  if (sample === undefined) return undefined;
+  if (sample.method !== "reservoir" || !Number.isInteger(sample.size) || sample.size <= 0) throw new Error("invalid_sample");
+  return sample.size;
 }

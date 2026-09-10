@@ -163,6 +163,7 @@ export interface HistoryApplyInput {
   action: "undo" | "redo" | "checkpoint" | "goto" | "fork";
   revision?: number;
   label?: string;
+  expected_revision?: number;
 }
 
 export interface CompiledQuery {
