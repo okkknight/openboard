@@ -116,11 +116,32 @@
       "required": ["id", "type"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "type": { "enum": ["barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell", "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY"] },
+        "renderer": { "enum": ["plot", "primitive"] },
+        "type": { "enum": ["barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell", "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY", "circle", "line", "arc", "path", "area"] },
         "x": {}, "y": {}, "color": {}, "fill": {}, "stroke": {}, "size": {}, "text": {},
         "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
         "filter": { "type": "array", "items": { "$ref": "#/$defs/filter" } },
-        "options": { "type": "object" }
+        "options": { "type": "object" },
+        "encoding": { "$ref": "#/$defs/encoding" }
+      },
+      "additionalProperties": false
+    },
+    "encodingValue": {
+      "oneOf": [
+        { "type": "string" }, { "type": "number" }, { "type": "boolean" }, { "type": "null" },
+        { "type": "object", "minProperties": 1, "maxProperties": 1, "properties": { "field": { "type": "string", "minLength": 1 }, "constant": {}, "derived": { "type": "string", "minLength": 1 } }, "additionalProperties": false }
+      ]
+    },
+    "encoding": {
+      "type": "object",
+      "properties": {
+        "x": { "$ref": "#/$defs/encodingValue" }, "y": { "$ref": "#/$defs/encodingValue" },
+        "x1": { "$ref": "#/$defs/encodingValue" }, "x2": { "$ref": "#/$defs/encodingValue" },
+        "y1": { "$ref": "#/$defs/encodingValue" }, "y2": { "$ref": "#/$defs/encodingValue" },
+        "angle": { "$ref": "#/$defs/encodingValue" }, "angle1": { "$ref": "#/$defs/encodingValue" }, "angle2": { "$ref": "#/$defs/encodingValue" },
+        "radius": { "$ref": "#/$defs/encodingValue" }, "innerRadius": { "$ref": "#/$defs/encodingValue" }, "outerRadius": { "$ref": "#/$defs/encodingValue" },
+        "color": { "$ref": "#/$defs/encodingValue" }, "fill": { "$ref": "#/$defs/encodingValue" }, "stroke": { "$ref": "#/$defs/encodingValue" },
+        "size": { "$ref": "#/$defs/encodingValue" }, "opacity": { "$ref": "#/$defs/encodingValue" }, "text": { "$ref": "#/$defs/encodingValue" }, "shape": { "$ref": "#/$defs/encodingValue" }
       },
       "additionalProperties": false
     },
@@ -143,6 +164,7 @@
         "title": { "type": "string" },
         "source": { "type": "string", "minLength": 1 },
         "query": { "$ref": "#/$defs/query" },
+        "coordinate": { "type": "object", "required": ["type"], "properties": { "type": { "enum": ["cartesian", "polar"] } }, "additionalProperties": false },
         "marks": { "type": "array", "items": { "$ref": "#/$defs/mark" } },
         "layout": { "$ref": "#/$defs/layout" },
         "derived_from": { "type": "string" },

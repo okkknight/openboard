@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
 import type { AnnotationSpec, ComposeInput, HistoryApplyInput, QuerySpec, VisualPatch, VisualSpec } from "../core/types.js";
 import { toolSchemas } from "./schemas.js";
-import { SUPPORTED_MARKS } from "../render/plot-compiler.js";
+import { SUPPORTED_MARKS, SUPPORTED_PRIMITIVES } from "../render/plot-compiler.js";
 
 export const TOOL_NAMES = [
   "canvas.inspect", "data.inspect", "data.query", "visual.create", "visual.patch",
@@ -53,7 +53,7 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
           const scene = runtime.inspect();
           const requested = (input as { include?: string[] }).include;
           const result: Record<string, unknown> = { scene };
-          if (!requested || requested.includes("capabilities")) result.capabilities = { point_limit: runtime.pointLimit(), marks: SUPPORTED_MARKS };
+          if (!requested || requested.includes("capabilities")) result.capabilities = { point_limit: runtime.pointLimit(), marks: SUPPORTED_MARKS, primitives: SUPPORTED_PRIMITIVES };
           return textResult({ status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result });
         }
         const request = input as Record<string, unknown>;
@@ -71,7 +71,7 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
           const id = String(request.id ?? `v${Object.keys(runtime.inspect().visuals).length + 1}`);
           const visual: VisualSpec = {
             id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined,
-            source: String(request.source), query: request.query as QuerySpec, marks: request.marks as VisualSpec["marks"],
+            source: String(request.source), query: request.query as QuerySpec, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"],
             layout: request.layout as VisualSpec["layout"] ?? placementLayout(runtime, request.placement as "auto" | "right" | "left" | "below" | "above")
           };
           return textResult(await runtime.visualCreate(visual, request.expected_revision as number | undefined));

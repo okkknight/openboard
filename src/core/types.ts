@@ -72,13 +72,51 @@ export interface QuerySpec {
 export type MarkType =
   | "barX" | "barY" | "lineX" | "lineY" | "areaX" | "areaY" | "dot"
   | "rect" | "cell" | "ruleX" | "ruleY" | "text" | "tickX" | "tickY"
-  | "boxX" | "boxY";
+  | "boxX" | "boxY" | PrimitiveMarkType;
 
 export type ChannelValue = JsonValue;
+
+export type CoordinateSpec = { type: "cartesian" | "polar" };
+
+export type RendererKind = "plot" | "primitive";
+
+export interface EncodingRef {
+  field?: string;
+  constant?: JsonValue;
+  derived?: string;
+}
+
+export type EncodingValue = JsonValue | EncodingRef;
+
+export interface EncodingSpec {
+  x?: EncodingValue;
+  y?: EncodingValue;
+  x1?: EncodingValue;
+  x2?: EncodingValue;
+  y1?: EncodingValue;
+  y2?: EncodingValue;
+  angle?: EncodingValue;
+  angle1?: EncodingValue;
+  angle2?: EncodingValue;
+  radius?: EncodingValue;
+  innerRadius?: EncodingValue;
+  outerRadius?: EncodingValue;
+  color?: EncodingValue;
+  fill?: EncodingValue;
+  stroke?: EncodingValue;
+  size?: EncodingValue;
+  opacity?: EncodingValue;
+  text?: EncodingValue;
+  shape?: EncodingValue;
+}
+
+export type PrimitiveMarkType = "rect" | "circle" | "line" | "arc" | "path" | "text" | "area";
 
 export interface MarkSpec {
   id: string;
   type: MarkType;
+  renderer?: RendererKind;
+  encoding?: EncodingSpec;
   x?: ChannelValue;
   y?: ChannelValue;
   color?: ChannelValue;
@@ -104,6 +142,7 @@ export interface VisualSpec {
   title?: string;
   source: string;
   query: QuerySpec;
+  coordinate?: CoordinateSpec;
   marks: MarkSpec[];
   layout: LayoutSpec;
   derived_from?: string;

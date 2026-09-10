@@ -255,7 +255,7 @@ interface MarkSpec {
 }
 ```
 
-Initial mark registry:
+Initial Plot mark registry (kept for compatibility):
 
 - `barX`, `barY`
 - `lineX`, `lineY`
@@ -269,6 +269,8 @@ Initial mark registry:
 - `boxX`, `boxY`
 
 Facet is a Visual-level encoding in M1, not a mark.
+
+The renderer boundary is open below this statistical registry. A Visual may optionally declare `coordinate: {type: "cartesian" | "polar"}` and marks may declare `renderer: "plot" | "primitive"` plus declarative `encoding` references. The primitive registry currently contains `rect`, `circle`, `line`, `arc`, `path`, `text`, and `area`; marks are compiled in order and may mix Plot and primitive layers in one Visual. `polar` is a coordinate system, not a pie chart type: pie, donut, and radial views are expressed by changing `arc` angle/radius encodings and `innerRadius` values. Primitive path data is pure SVG geometry and never accepts executable content.
 
 The renderer adapter compiles supported MarkSpecs to Observable Plot calls. Unsupported options fail explicitly with `unsupported_visual_feature`; they are never silently ignored.
 

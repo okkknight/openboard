@@ -42,6 +42,24 @@ test("patch mutates the same visual and increments revision once", () => {
   assert.deepEqual(result.visual.marks.map((m) => m.id), ["trend"]);
 });
 
+test("patches coordinate and one mark encoding in place", () => {
+  const store = new SceneStore(seed());
+  const result = store.patchVisual("v1", {
+    set: {
+      coordinate: { type: "polar" },
+      "marks.bars.renderer": "primitive",
+      "marks.bars.type": "arc",
+      "marks.bars.encoding": { angle: { field: "orders" }, color: { field: "channel" } }
+    }
+  });
+  assert.equal(result.revision, 1);
+  assert.equal(result.visual.id, "v1");
+  assert.deepEqual(result.visual.coordinate, { type: "polar" });
+  assert.equal(result.visual.marks[0].renderer, "primitive");
+  assert.equal(result.visual.marks[0].type, "arc");
+  assert.deepEqual(result.visual.marks[0].encoding, { angle: { field: "orders" }, color: { field: "channel" } });
+});
+
 test("clone preserves original and records derived_from", () => {
   const store = new SceneStore(seed());
   const result = store.cloneVisual("v1", "v2", {

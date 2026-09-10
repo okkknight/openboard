@@ -39,6 +39,7 @@
     .annotation { padding: 10px 0; border-top: 1px solid var(--line); }
     .annotation strong { display: block; color: var(--focus); font-size: 12px; margin-bottom: 3px; }
     #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+    #empty[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -73,6 +74,46 @@
       return factory(data, mark.options || {});
     };
     const plotData = (rows) => rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) ? new Date(value) : value])));
+    const svgElement = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
+    const primitivePalette = ['#6bd8c4', '#f6c86e', '#8aa6ff', '#e889bd', '#9aa8ba', '#f39a9f', '#8bd17c', '#d6a2e8'];
+    const primitiveColor = (value, index) => typeof value === 'string' && /^(#|rgb\(|hsl\(|transparent$|currentColor$)/i.test(value) ? value : primitivePalette[index % primitivePalette.length];
+    const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    function renderPrimitiveLayer(layer, width, height, svg) {
+      const group = svgElement('g'); group.setAttribute('data-primitive', layer.id);
+      const values = layer.values || []; const options = layer.options || {};
+      if (layer.type === 'arc') {
+        const radius = Math.max(1, Math.min(width, height) / 2 - 12);
+        const cx = width / 2; const cy = height / 2;
+        values.forEach((row, index) => {
+          const path = svgElement('path');
+          const arc = d3.arc().innerRadius(numeric(row.innerRadius) * radius).outerRadius(numeric(row.outerRadius, 1) * radius).startAngle(numeric(row.startAngle)).endAngle(numeric(row.endAngle));
+          path.setAttribute('d', arc(row) || ''); path.setAttribute('transform', `translate(${cx},${cy})`);
+          path.setAttribute('fill', primitiveColor(row.fill ?? row.color ?? options.fill, index));
+          path.setAttribute('stroke', String(row.stroke ?? options.stroke ?? '#0d1117'));
+          path.setAttribute('stroke-width', String(options.strokeWidth ?? 1)); group.append(path);
+        });
+      } else if (layer.type === 'circle') {
+        values.forEach((row, index) => {
+          const circle = svgElement('circle'); circle.setAttribute('cx', String(numeric(row._x))); circle.setAttribute('cy', String(numeric(row._y))); circle.setAttribute('r', String(Math.max(0, numeric(row._radius ?? row._size, 4))));
+          circle.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); if (row._stroke ?? options.stroke) circle.setAttribute('stroke', String(row._stroke ?? options.stroke)); group.append(circle);
+        });
+      } else if (layer.type === 'line') {
+        values.forEach((row, index) => {
+          const line = svgElement('line'); line.setAttribute('x1', String(numeric(row._x1 ?? row._x))); line.setAttribute('y1', String(numeric(row._y1 ?? row._y))); line.setAttribute('x2', String(numeric(row._x2 ?? row._x))); line.setAttribute('y2', String(numeric(row._y2 ?? row._y))); line.setAttribute('stroke', String(row._stroke ?? options.stroke ?? primitiveColor(row._color, index))); line.setAttribute('stroke-width', String(options.strokeWidth ?? 2)); group.append(line);
+        });
+      } else if (layer.type === 'rect') {
+        values.forEach((row, index) => {
+          const rect = svgElement('rect'); const x = numeric(row._x); const y = numeric(row._y); const x2 = numeric(row._x2, x + numeric(row._width, 10)); const y2 = numeric(row._y2, y + numeric(row._height, 10)); rect.setAttribute('x', String(Math.min(x, x2))); rect.setAttribute('y', String(Math.min(y, y2))); rect.setAttribute('width', String(Math.abs(x2 - x))); rect.setAttribute('height', String(Math.abs(y2 - y))); rect.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); group.append(rect);
+        });
+      } else if (layer.type === 'path') {
+        const path = svgElement('path'); path.setAttribute('d', String(options.d)); if (options.fill !== undefined) path.setAttribute('fill', String(options.fill)); if (options.stroke !== undefined) path.setAttribute('stroke', String(options.stroke)); group.append(path);
+      } else if (layer.type === 'text') {
+        values.forEach((row) => { const text = svgElement('text'); text.setAttribute('x', String(numeric(row._x))); text.setAttribute('y', String(numeric(row._y))); text.setAttribute('fill', String(row._fill ?? options.fill ?? '#edf3fb')); text.textContent = String(row._text ?? ''); group.append(text); });
+      } else if (layer.type === 'area') {
+        const points = values.map((row) => [numeric(row._x), numeric(row._y)]); if (points.length) { const path = svgElement('path'); path.setAttribute('d', `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`); path.setAttribute('fill', String(options.fill ?? '#6bd8c4')); path.setAttribute('fill-opacity', String(options.fillOpacity ?? 0.35)); group.append(path); }
+      }
+      svg.append(group);
+    }
 
     async function render(id) {
       const response = await fetch('/api/visual/' + encodeURIComponent(id));
@@ -101,7 +142,10 @@
           const first = payload.result.plot.data[0] || {}; const value = Object.values(first)[0] ?? payload.result.rows;
           plot.replaceChildren(Object.assign(document.createElement('div'), { className: 'kpi-value', textContent: String(value) }));
         } else {
-          plot.replaceChildren(Plot.plot({ width: Math.max(220, visual.layout.w - 16), height: Math.max(120, visual.layout.h - 48), margin: 32, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) }));
+          const width = Math.max(220, visual.layout.w - 16); const height = Math.max(120, visual.layout.h - 48);
+          const svg = Plot.plot({ width, height, margin: 32, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
+          for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg);
+          plot.replaceChildren(svg);
         }
       } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);

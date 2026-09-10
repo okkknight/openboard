@@ -36,3 +36,14 @@ test("accepts every frozen initial mark type", () => {
   const compiled = compilePlot({ ...visual, marks: markTypes.map((type, index) => ({ id: `m${index}`, type, x: "day", y: "value" })) }, [{ day: "2026-01-01", value: 1 }]);
   assert.deepEqual(compiled.marks.map((mark) => mark.type), markTypes);
 });
+
+test("compiles mixed statistical and primitive layers through one visual", () => {
+  const config = compilePlot({ ...visual, coordinate: { type: "polar" }, marks: [
+    { id: "trend", type: "lineY", x: "day", y: "value" },
+    { id: "slices", renderer: "primitive", type: "arc", encoding: { angle: { field: "value" }, color: { field: "day" } } }
+  ] }, [{ day: "A", value: 3 }, { day: "B", value: 1 }]);
+  assert.deepEqual(config.marks.map((mark) => mark.type), ["lineY"]);
+  assert.equal(config.primitives?.[0].type, "arc");
+  assert.equal(config.primitives?.[0].values.length, 2);
+  assert.deepEqual(config.layers.map((layer) => layer.renderer), ["plot", "primitive"]);
+});

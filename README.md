@@ -15,10 +15,13 @@ This is the **local V1 runtime** for Data Canvas. It includes:
 - a tested SceneStore, history/persistence layer, and deterministic observations;
 - DuckDB-backed QuerySpec/raw read-only query execution;
 - live spatial browser canvas with WebSocket updates;
+- open visual grammar with an internal renderer registry: Observable Plot statistical marks can be mixed with declarative SVG primitives (`arc`, `path`, `circle`, `line`, `rect`, `area`, `text`);
 - sample CSV data and expected interaction traces;
 - Codex instructions and acceptance tests.
 
 The runtime keeps the durable Scene independent from disposable Plot output and never stores generated DOM/HTML in scene history.
+
+Visual form is expressed by Scene state, not chart templates. A visual may set an independent `coordinate` (`cartesian` or `polar`) and use ordered marks with optional `renderer` and `encoding` fields. Legacy Plot marks keep their original syntax; primitive marks compile to safe SVG geometry, so pie/donut/radial views are `polar + arc` patches on the same visual rather than new chart types.
 
 ## Frozen V1 stack
 

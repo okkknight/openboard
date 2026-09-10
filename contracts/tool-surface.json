@@ -58,6 +58,7 @@
           "kind": { "enum": ["plot", "table", "kpi"], "default": "plot" },
           "title": { "type": "string" },
           "source": { "type": "string" },
+          "coordinate": { "type": "object", "required": ["type"], "properties": { "type": { "enum": ["cartesian", "polar"] } }, "additionalProperties": false },
           "query": { "$ref": "scene.schema.json#/$defs/query" },
           "marks": { "type": "array", "items": { "$ref": "scene.schema.json#/$defs/mark" } },
           "layout": { "$ref": "scene.schema.json#/$defs/layout" },
