@@ -88,6 +88,9 @@ function compileArc(mark: MarkSpec, rows: JsonObject[], coordinate: CoordinateSp
     if (fill !== undefined) value.fill = fill;
     const stroke = resolve(enc.stroke, row, "stroke");
     if (stroke !== undefined) value.stroke = stroke;
+    const text = resolve(enc.text, row, "text");
+    if (text !== undefined) value.label = text;
+    value.percent = angles[index] / total;
     return value;
   });
 }

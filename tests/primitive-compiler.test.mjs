@@ -14,6 +14,15 @@ test("compiles polar arc sectors from an angle encoding", () => {
   assert.equal(layer.values[1].color, "B");
 });
 
+test("preserves arc label values and percentages for on-chart annotations", () => {
+  const layer = compilePrimitive({
+    id: "slices", renderer: "primitive", type: "arc",
+    encoding: { angle: { field: "orders" }, color: { field: "channel" }, text: { field: "channel" } }
+  }, [{ channel: "A", orders: 3 }, { channel: "B", orders: 1 }], { type: "polar" });
+  assert.equal(layer.values[0].label, "A");
+  assert.equal(layer.values[0].percent, 0.75);
+});
+
 test("patching innerRadius changes only the primitive geometry", () => {
   const layer = compilePrimitive({
     id: "slices", renderer: "primitive", type: "arc",

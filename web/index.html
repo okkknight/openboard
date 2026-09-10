@@ -91,6 +91,22 @@
           path.setAttribute('fill', primitiveColor(row.fill ?? row.color ?? options.fill, index));
           path.setAttribute('stroke', String(row.stroke ?? options.stroke ?? '#0d1117'));
           path.setAttribute('stroke-width', String(options.strokeWidth ?? 1)); group.append(path);
+          if (row.label !== undefined && row.label !== null && String(row.label).trim()) {
+            const label = svgElement('text');
+            const midpointRadius = ((numeric(row.innerRadius) + numeric(row.outerRadius, 1)) / 2) * radius;
+            const midpointAngle = (numeric(row.startAngle) + numeric(row.endAngle)) / 2;
+            label.setAttribute('x', String(cx + Math.cos(midpointAngle) * midpointRadius));
+            label.setAttribute('y', String(cy + Math.sin(midpointAngle) * midpointRadius));
+            label.setAttribute('fill', String(options.labelColor ?? '#0d1117'));
+            label.setAttribute('font-size', String(options.labelFontSize ?? 11));
+            label.setAttribute('font-weight', String(options.labelFontWeight ?? 600));
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('dominant-baseline', 'middle');
+            label.setAttribute('pointer-events', 'none');
+            const percent = Number(row.percent);
+            label.textContent = Number.isFinite(percent) ? `${String(row.label)} ${Math.round(percent * 100)}%` : String(row.label);
+            group.append(label);
+          }
         });
       } else if (layer.type === 'circle') {
         values.forEach((row, index) => {
