@@ -95,8 +95,9 @@
             const label = svgElement('text');
             const midpointRadius = ((numeric(row.innerRadius) + numeric(row.outerRadius, 1)) / 2) * radius;
             const midpointAngle = (numeric(row.startAngle) + numeric(row.endAngle)) / 2;
-            label.setAttribute('x', String(cx + Math.cos(midpointAngle) * midpointRadius));
-            label.setAttribute('y', String(cy + Math.sin(midpointAngle) * midpointRadius));
+            // Observable Plot/D3 arcs use angle 0 at 12 o'clock and increase clockwise.
+            label.setAttribute('x', String(cx + Math.sin(midpointAngle) * midpointRadius));
+            label.setAttribute('y', String(cy - Math.cos(midpointAngle) * midpointRadius));
             label.setAttribute('fill', String(options.labelColor ?? '#0d1117'));
             label.setAttribute('font-size', String(options.labelFontSize ?? 11));
             label.setAttribute('font-weight', String(options.labelFontWeight ?? 600));
