@@ -60,6 +60,12 @@ test("patches coordinate and one mark encoding in place", () => {
   assert.deepEqual(result.visual.marks[0].encoding, { angle: { field: "orders" }, color: { field: "channel" } });
 });
 
+test("unsets a nested mark encoding path", () => {
+  const store = new SceneStore({ ...seed(), visuals: { v1: { ...seed().visuals.v1, marks: [{ id: "bars", type: "barY", encoding: { radius: { constant: 1 }, color: { field: "channel" } } }] } } });
+  const result = store.patchVisual("v1", { unset: ["marks.bars.encoding.radius"] });
+  assert.deepEqual(result.visual.marks[0].encoding, { color: { field: "channel" } });
+});
+
 test("clone preserves original and records derived_from", () => {
   const store = new SceneStore(seed());
   const result = store.cloneVisual("v1", "v2", {

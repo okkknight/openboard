@@ -62,6 +62,16 @@ function setObjectPath(target: Record<string, unknown>, segments: string[], valu
   cursor[segments.at(-1)!] = clone(value);
 }
 
+function unsetObjectPath(target: Record<string, unknown>, segments: string[]): void {
+  let cursor = target;
+  for (const segment of segments.slice(0, -1)) {
+    const existing = cursor[segment];
+    if (existing === undefined || existing === null || typeof existing !== "object" || Array.isArray(existing)) return;
+    cursor = existing as Record<string, unknown>;
+  }
+  delete cursor[segments.at(-1)!];
+}
+
 function setAtPath(target: Record<string, unknown>, path: string, value: JsonValue): void {
   const markPath = markForPath(target, path);
   if (markPath) { setObjectPath(markPath.mark, markPath.segments, value); return; }
@@ -72,7 +82,7 @@ function setAtPath(target: Record<string, unknown>, path: string, value: JsonVal
 function unsetAtPath(target: Record<string, unknown>, path: string): void {
   const markPath = markForPath(target, path);
   if (markPath) {
-    delete markPath.mark[markPath.segments.at(-1)!];
+    unsetObjectPath(markPath.mark, markPath.segments);
     return;
   }
   validatePatchPath(path);
