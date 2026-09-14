@@ -151,7 +151,7 @@ export function annotateDetachedPlotLayer(group, mark) {
   return group;
 }
 
-export function reconcilePlotViewport(container, nextSvg, visual, artifact, { onEnter = () => {}, onUpdate = () => {}, onExit = () => {} } = {}) {
+export function reconcilePlotViewport(container, nextSvg, visual, artifact, { onEnter = () => {}, onUpdate = () => {}, onExit = () => {}, onReplaceLayer = () => {} } = {}) {
   let viewport = container.querySelector('svg[data-visual-id]');
   if (!viewport || viewport.dataset.visualId !== visual.id) {
     viewport = stableViewport(nextSvg, visual.id, artifact);
@@ -195,7 +195,17 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
     const currentLayer = currentByMark.get(operation.mark_id);
     const nextLayer = nextByMark.get(operation.mark_id);
     if (operation.type === 'replace-layer') {
-      if (currentLayer && nextLayer) currentLayer.replaceWith(nextLayer.cloneNode(true));
+      const markType = nextLayer?.dataset.markType ?? currentLayer?.dataset.markType;
+      if (currentLayer && nextLayer) {
+        Promise.resolve(onReplaceLayer(currentLayer, nextLayer, operation, { fromMarkType: currentLayer.dataset.markType, markType, index: operationIndex++ })).then(() => {
+          const replacement = nextLayer.cloneNode(true);
+          currentLayer.replaceWith(replacement);
+          for (const node of layerNodes(replacement)) {
+            const enter = { type: 'enter', mark_id: operation.mark_id, key: node.key };
+            void onEnter(node.element, enter, { markType, index: operationIndex++ });
+          }
+        });
+      }
       else if (currentLayer) currentLayer.remove();
       else if (nextLayer) currentMarks.append(nextLayer.cloneNode(true));
       continue;

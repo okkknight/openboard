@@ -64,6 +64,7 @@
     import { createRenderIdentityRegistry } from '/assets/render-identity-registry.js';
     import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '/assets/render-reconciler.js';
     import { createRenderMotion } from '/assets/render-motion.js';
+    import { crossMarkTransition } from '/assets/cross-mark-transition.js';
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -313,7 +314,11 @@
           reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
             onEnter: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index }),
             onUpdate: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index }),
-            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index })
+            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index }),
+            onReplaceLayer: (element, nextLayer, operation, meta) => {
+              element.dataset.transition = crossMarkTransition(meta.fromMarkType, meta.markType).kind;
+              return renderMotion.apply({ visualId: id, generation: requestGeneration, operation: { ...operation, type: 'exit' }, markType: meta.fromMarkType, element, index: meta.index });
+            }
           });
         }
       } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
