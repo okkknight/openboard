@@ -21,8 +21,9 @@ export interface PlotConfig {
   layers?: CompiledLayer[];
 }
 
-const supportedOptions = new Set(["curve", "fillOpacity", "strokeWidth", "r", "inset", "title"]);
+const supportedOptions = new Set(["curve", "fillOpacity", "strokeWidth", "r", "inset", "rx", "ry", "title"]);
 const channels = ["x", "y", "color", "fill", "stroke", "size", "text"] as const;
+const DEFAULT_ACCENT = "#6bd8c4";
 
 function encodingValue(value: unknown): JsonValue {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -45,7 +46,37 @@ function asOptions(mark: MarkSpec): JsonObject {
     if (!supportedOptions.has(key)) throw new Error(`unsupported_visual_feature: option ${key}`);
     options[key] = value;
   }
+  applyVisualDefaults(mark, options);
   return options;
+}
+
+function categoricalAxis(mark: MarkSpec, options: JsonObject): JsonValue | undefined {
+  const axis = mark.type === "barY" ? options.x : mark.type === "barX" ? options.y : undefined;
+  return typeof axis === "string" ? axis : undefined;
+}
+
+function applyVisualDefaults(mark: MarkSpec, options: JsonObject): void {
+  if (mark.type === "barX" || mark.type === "barY") {
+    if (options.fill === undefined) options.fill = options.color ?? categoricalAxis(mark, options) ?? DEFAULT_ACCENT;
+    if (options.inset === undefined) options.inset = 3;
+    if (options.rx === undefined) options.rx = 6;
+    if (options.ry === undefined) options.ry = 6;
+    return;
+  }
+  if (mark.type === "lineX" || mark.type === "lineY") {
+    if (options.stroke === undefined && options.color === undefined) options.stroke = DEFAULT_ACCENT;
+    if (options.strokeWidth === undefined) options.strokeWidth = 3;
+    return;
+  }
+  if (mark.type === "areaX" || mark.type === "areaY") {
+    if (options.fill === undefined && options.color === undefined) options.fill = DEFAULT_ACCENT;
+    if (options.fillOpacity === undefined) options.fillOpacity = 0.3;
+    return;
+  }
+  if (mark.type === "dot") {
+    if (options.fill === undefined && options.color === undefined) options.fill = DEFAULT_ACCENT;
+    if (options.r === undefined) options.r = 5;
+  }
 }
 
 export function compilePlot(visual: VisualSpec, rows: JsonObject[]): PlotConfig {

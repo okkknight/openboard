@@ -75,7 +75,8 @@
     };
     const plotData = (rows) => rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) ? new Date(value) : value])));
     const svgElement = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
-    const primitivePalette = ['#6bd8c4', '#f6c86e', '#8aa6ff', '#e889bd', '#9aa8ba', '#f39a9f', '#8bd17c', '#d6a2e8'];
+    const plotPalette = ['#6bd8c4', '#f6c86e', '#8aa6ff', '#e889bd', '#f39a9f', '#8bd17c', '#d6a2e8', '#9aa8ba'];
+    const primitivePalette = plotPalette;
     const primitiveColor = (value, index) => typeof value === 'string' && /^(#|rgb\(|hsl\(|transparent$|currentColor$)/i.test(value) ? value : primitivePalette[index % primitivePalette.length];
     const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
     function renderPrimitiveLayer(layer, width, height, svg) {
@@ -160,7 +161,7 @@
           plot.replaceChildren(Object.assign(document.createElement('div'), { className: 'kpi-value', textContent: String(value) }));
         } else {
           const width = Math.max(220, visual.layout.w - 16); const height = Math.max(120, visual.layout.h - 48);
-          const svg = Plot.plot({ width, height, margin: 32, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
+          const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg);
           plot.replaceChildren(svg);
         }

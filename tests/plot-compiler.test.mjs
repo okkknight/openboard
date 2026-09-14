@@ -21,6 +21,14 @@ test("compiles supported layered marks in input order", () => {
   assert.equal(config.marks[1].options.x, "day");
 });
 
+test("gives categorical bars vivid defaults when no color is specified", () => {
+  const config = compilePlot({
+    ...visual,
+    marks: [{ id: "orders", type: "barY", x: "channel", y: "orders" }]
+  }, [{ channel: "A", orders: 4 }, { channel: "B", orders: 12 }]);
+  assert.deepEqual(config.marks[0].options, { x: "channel", y: "orders", fill: "channel", inset: 3, rx: 6, ry: 6 });
+});
+
 test("rejects unsupported mark types instead of ignoring them", () => {
   assert.throws(() => compilePlot({ ...visual, marks: [{ id: "bad", type: "pie" }] }, []), /unsupported_visual_feature/);
 });
