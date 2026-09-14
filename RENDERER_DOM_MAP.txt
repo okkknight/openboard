@@ -1,0 +1,121 @@
+Data Canvas / OpenBoard renderer DOM map (observed 2026-09-14)
+================================================================
+
+MAIN FLOW
+---------
+
+  WebSocket event / initial load
+          |
+          v
+  web/index.html: render(id, workId?)
+          |
+          +--> GET /api/visual/:id[?work_id=...]
+          |       |
+          |       +--> DataCanvasRuntime.renderVisual
+          |               +--> #artifactFor (cache or miss)
+          |               +--> #render
+          |                       +--> DuckDB profile
+          |                       +--> compileQuery
+          |                       +--> DuckDB query / raw SQL
+          |                       +--> render-limit check
+          |                       +--> compilePlot
+          |                       +--> observe
+          |
+          +--> browser receives RuntimeResult
+                  |
+                  +--> markToPlot(mark, rows) drops CompiledMark.id
+                  +--> Plot.plot({marks: ...})       [NEW SVG]
+                  +--> renderPrimitiveLayer(...)     [append anonymous SVG groups]
+                  +--> plot.replaceChildren(svg)     [REBUILDS plot subtree]
+                  +--> animatePlotMarks(svg)         [post-render entrance only]
+
+  RETAINED / REBUILT / KEYED legend
+    RETAINED = same DOM node can survive a render event
+    REBUILT  = current code replaces/remakes the node or subtree
+    KEYED    = stable business/visual key is attached and usable for a join
+    UNKEYED  = no usable stable key in browser DOM (aria labels are type labels)
+
+CARD SHELL
+----------
+
+  #board
+    article.visual-card[data-visual="<visual.id>"]        RETAINED
+      .visual-head                                           RETAINED
+        .visual-title                                        RETAINED (text updated)
+        .visual-id                                           RETAINED (id text)
+      .plot                                                   RETAINED
+        svg.plot-d6a7b5                                       REBUILT, UNKEYED
+          style                                                REBUILT
+          g aria-label="y-axis tick"                         REBUILT, UNKEYED
+          g aria-label="y-axis tick label"                   REBUILT, UNKEYED
+          g aria-label="y-axis label"                        REBUILT, UNKEYED
+          g aria-label="x-axis tick"                         REBUILT, UNKEYED
+          g aria-label="x-axis tick label"                   REBUILT, UNKEYED
+          g aria-label="x-axis label"                        REBUILT, UNKEYED
+          g aria-label="<mark aria label>"                   REBUILT, UNKEYED
+            mark geometry nodes                              REBUILT, UNKEYED
+          g data-primitive="<mark.id>"                       REBUILT, UNKEYED
+            primitive geometry nodes                          REBUILT, UNKEYED
+
+BAR (current browser: g aria-label="bar")
+-------------------------------------------
+
+  Plot.plot
+    g aria-label="bar"                                     REBUILT, UNKEYED
+      rect × N                                              REBUILT, UNKEYED
+        x,width,y,height,rx,ry,fill                         geometry/style only
+        __data__                                             not exposed by browser probe
+        data-entrance-animation="bar"                       transient animation marker
+
+  Source-level identity: Observable Plot binds a transient index array with
+  d3 selection .data(index). It is not a business datum key and is discarded
+  when the SVG is replaced. Compiled mark.id is not passed by markToPlot.
+
+LINE (current browser: line + dot)
+-----------------------------------
+
+  Plot.plot
+    g aria-label="line"                                    REBUILT, UNKEYED
+      path × series                                          REBUILT, UNKEYED
+        d, stroke, stroke-width                             geometry/style only
+    g aria-label="dot"                                      REBUILT, UNKEYED
+      circle × point                                         REBUILT, UNKEYED
+        cx,cy,r,fill                                         geometry/style only
+
+  Line identity is series/group identity only inside one Plot call. The path
+  is not keyed to VisualSpec mark.id or a source row in the browser DOM.
+  Dots are individual points but have no stable source-row key in the DOM.
+
+ARC / DONUT (primitive renderer)
+--------------------------------
+
+  Plot.plot creates base SVG and axes (if any)
+    g data-primitive="<primitive mark.id>"                 REBUILT, UNKEYED
+      path × slice                                           REBUILT, UNKEYED
+        d, transform, fill, stroke, stroke-width             geometry/style only
+      text × labelled slice                                  REBUILT, UNKEYED
+        x,y,text,fill                                         geometry/style only
+
+  PrimitiveLayer.id survives in PlotConfig and is copied to the group as
+  data-primitive, but there is no per-value key. Arc paths are generated from
+  startAngle/endAngle/innerRadius/outerRadius and are recreated on every
+  render. Current donut has one anonymous group containing 4 paths + 4 texts.
+
+RETENTION SUMMARY
+-----------------
+
+  article card             RETAINED when visual.id already exists
+  card head/title/id       RETAINED
+  .plot container           RETAINED
+  Plot SVG                  REBUILT by replaceChildren
+  axes/ticks/labels         REBUILT, UNKEYED
+  Plot mark groups          REBUILT, UNKEYED
+  Plot mark elements        REBUILT, UNKEYED
+  primitive groups          REBUILT, UNKEYED (group has type/id metadata only)
+  primitive elements        REBUILT, UNKEYED
+  table/kpi content         REBUILT by replaceChildren
+
+The smallest future insertion point is immediately before the browser's
+plot.replaceChildren(svg) call, but a safe keyed diff needs a richer
+RenderArtifact (or RenderTree) before this point; direct SVG diff is not
+reliable with the current identity surface.
