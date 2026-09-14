@@ -63,6 +63,7 @@
     import { acceptWorkEvent } from '/assets/work-event-order.js';
     import { createRenderIdentityRegistry } from '/assets/render-identity-registry.js';
     import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '/assets/render-reconciler.js';
+    import { createRenderMotion } from '/assets/render-motion.js';
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -110,6 +111,7 @@
     const primitiveColor = (value, index) => typeof value === 'string' && /^(#|rgb\(|hsl\(|transparent$|currentColor$)/i.test(value) ? value : primitivePalette[index % primitivePalette.length];
     const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
     const motionReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const renderMotion = createRenderMotion({ reduced: motionReduced });
     const easeOut = (progress) => 1 - Math.pow(1 - progress, 3);
     const visualSignature = (visual) => JSON.stringify({ kind: visual.kind, source: visual.source, query: visual.query, coordinate: visual.coordinate, marks: visual.marks });
     const shouldAnimateVisual = (visual) => {
@@ -260,6 +262,7 @@
 
     async function render(id, workId = workForVisual(id)) {
       const requestGeneration = renderGenerations.request(id);
+      renderMotion.begin(id, requestGeneration);
       const url = '/api/visual/' + encodeURIComponent(id) + (workId ? `?work_id=${encodeURIComponent(workId)}` : '');
       const response = await fetch(url);
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
@@ -267,7 +270,6 @@
       if (!renderGenerations.accepts(id, requestGeneration)) return;
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
-      const animate = !workId && shouldAnimateVisual(visual);
       let card = cardFor(id);
       if (!card) {
         card = document.createElement('article'); card.className = 'visual-card'; card.dataset.visual = id;
@@ -299,9 +301,12 @@
         } else {
           const layout = visualLayout(visual); const width = Math.max(220, layout.w - 16); const height = Math.max(120, layout.h - 48);
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
-          for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, animate);
-          const reconciliation = reconcilePlotViewport(plot, svg, visual, payload.result.artifact);
-          if (animate && reconciliation.initial) animatePlotMarks(reconciliation.viewport);
+          for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, false);
+          reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
+            onEnter: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index }),
+            onUpdate: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index }),
+            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index })
+          });
         }
       } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);

@@ -149,8 +149,9 @@ test("serves the keyed SVG reconciliation module to the browser", async () => {
     const reconciler = await fetch(`http://127.0.0.1:${server.port}/assets/render-reconciler.js`).then((response) => response.text());
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
     assert.match(reconciler, /reconcilePlotViewport/);
-    assert.match(html, /reconcilePlotViewport\(plot, svg, visual, payload\.result\.artifact\)/);
+    assert.match(html, /reconcilePlotViewport\(plot, svg, visual, payload\.result\.artifact, \{/);
     assert.match(html, /renderGenerations\.accepts/);
+    assert.match(html, /createRenderMotion/);
   } finally { await server.close(); runtime.close(); }
 });
 

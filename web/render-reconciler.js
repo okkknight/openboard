@@ -151,12 +151,20 @@ export function annotateDetachedPlotLayer(group, mark) {
   return group;
 }
 
-export function reconcilePlotViewport(container, nextSvg, visual, artifact, { onExit = (node) => node.remove() } = {}) {
+export function reconcilePlotViewport(container, nextSvg, visual, artifact, { onEnter = () => {}, onUpdate = () => {}, onExit = () => {} } = {}) {
   let viewport = container.querySelector('svg[data-visual-id]');
   if (!viewport || viewport.dataset.visualId !== visual.id) {
     viewport = stableViewport(nextSvg, visual.id, artifact);
     container.replaceChildren(viewport);
-    return { viewport, initial: true, operations: [] };
+    const operations = [];
+    for (const layer of viewport.querySelectorAll(':scope > [data-zone="marks"] > [data-mark-id]')) {
+      for (const node of layerNodes(layer)) {
+        const operation = { type: 'enter', mark_id: layer.dataset.markId, key: node.key };
+        operations.push(operation);
+        void onEnter(node.element, operation, { markType: layer.dataset.markType, index: operations.length - 1 });
+      }
+    }
+    return { viewport, initial: true, operations };
   }
 
   const next = stableViewport(nextSvg, visual.id, artifact);
@@ -178,6 +186,7 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
   const currentByMark = new Map([...currentMarks.children].map((layer) => [layer.dataset.markId, layer]));
   const nextByMark = new Map([...nextMarks.children].map((layer) => [layer.dataset.markId, layer]));
 
+  let operationIndex = 0;
   for (const operation of operations) {
     if (operation.type === 'replace-axes') {
       currentAxes.replaceChildren(...[...nextAxes.childNodes].map((node) => node.cloneNode(true)));
@@ -199,9 +208,18 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
     const selector = `[data-render-key="${CSS.escape(operation.key)}"]`;
     const currentNode = currentLayer.querySelector(selector);
     const nextNode = nextLayer && nextLayer.querySelector(selector);
-    if (operation.type === 'update' && currentNode && nextNode) copyAttributes(currentNode, nextNode);
-    if (operation.type === 'enter' && nextNode) currentLayer.append(nextNode.cloneNode(true));
-    if (operation.type === 'exit' && currentNode) Promise.resolve(onExit(currentNode, operation)).then(() => currentNode.remove());
+    const markType = nextLayer?.dataset.markType ?? currentLayer?.dataset.markType;
+    if (operation.type === 'update' && currentNode && nextNode) {
+      const from = Object.fromEntries([...currentNode.attributes].map((attribute) => [attribute.name, attribute.value]));
+      copyAttributes(currentNode, nextNode);
+      void onUpdate(currentNode, operation, { markType, from, index: operationIndex++ });
+    }
+    if (operation.type === 'enter' && nextNode) {
+      const entered = nextNode.cloneNode(true);
+      currentLayer.append(entered);
+      void onEnter(entered, operation, { markType, index: operationIndex++ });
+    }
+    if (operation.type === 'exit' && currentNode) Promise.resolve(onExit(currentNode, operation, { markType, index: operationIndex++ })).then(() => currentNode.remove());
   }
   return { viewport, initial: false, operations };
 }
