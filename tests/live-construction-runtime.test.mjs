@@ -177,6 +177,32 @@ test("moving a rendered card does not issue another DuckDB query", async () => {
   runtime.close();
 });
 
+test("keeps a five-second work session as execution-driven construction through commit", async () => {
+  const gate = deferred();
+  const engine = new SlowQueryEngine(gate);
+  const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
+  const events = [];
+  runtime.onEvent((event) => events.push({ at: performance.now(), ...event }));
+  const begun = await runtime.workApply({ action: "begin" });
+  const create = runtime.visualCreate(fullVisual(), undefined, begun.result.work_id);
+
+  await waitFor(() => events.some((event) => event.type === "work.visual.changed"));
+  const workingAt = events.find((event) => event.type === "work.visual.changed").at;
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 5100));
+  gate.release();
+  await create;
+  await runtime.visualClone("channel-orders", "regional-orders", { set: { title: "Regional follow-up", layout: { x: 520, y: 0, w: 480, h: 320 } } }, undefined, begun.result.work_id);
+  await runtime.canvasAnnotate({ id: "finding", target: "channel-orders", text: "Execution-backed finding", created_at: "2026-09-14T00:00:00.000Z" }, undefined, begun.result.work_id);
+  await runtime.workApply({ action: "commit", work_id: begun.result.work_id });
+
+  const completed = events.find((event) => event.type === "work.completed");
+  assert.ok(completed.at - workingAt >= 5000);
+  assert.equal(runtime.inspect().visuals["regional-orders"].derived_from, "channel-orders");
+  assert.equal(runtime.inspect().annotations.finding.text, "Execution-backed finding");
+  assert.equal(events.at(-1).type, "work.completed");
+  runtime.close();
+});
+
 test("shares an in-flight work artifact with a browser render request", async () => {
   const gate = deferred();
   const engine = new SlowQueryEngine(gate);

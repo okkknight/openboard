@@ -11,12 +11,13 @@
 
 ## Verification
 
-- `npm run verify:core` on 2026-09-14: 105 passed, 0 failed; contracts validated.
+- `npm run verify:core` on 2026-09-14: 108 passed, 0 failed; contracts validated.
 - Browser Scenario A probe: an A/B/C source changed to A/C/D. The SVG root plus A and C elements compared `===`; B was absent after its EXIT, D was present after ENTER, and exactly one SVG root remained.
 - Browser DOM probe: a primitive channel-A arc path compared `===` after a compatible patch.
 - Reconciliation planner mean wall time over 100 runs: 10 marks 0.006 ms; 100 marks 0.025 ms; 1000 marks 0.186 ms. These are local planner measurements, not end-to-end browser timing claims.
 - Construction-pattern audit found no runtime fake progress/staged replay. The sole browser `setTimeout` is WebSocket reconnect backoff; test-only waits remain in test files.
 - The runtime suite verifies that a rendered-card `move` keeps DuckDB query count unchanged. Browser layout and removal event paths update retained DOM/metadata rather than re-rendering every visual.
+- A 5.1-second slow-query WorkSession test verifies working draft → real query result → derived regional view → annotation → commit, with ordered events and unchanged durable state until commit.
 
 ## Scope notes
 
