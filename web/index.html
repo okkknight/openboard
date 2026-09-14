@@ -62,6 +62,7 @@
   <script type="module">
     import { acceptWorkEvent } from '/assets/work-event-order.js';
     import { createRenderIdentityRegistry } from '/assets/render-identity-registry.js';
+    import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '/assets/render-reconciler.js';
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -80,6 +81,7 @@
     const activeWorks = new Map();
     const lastSequence = new Map();
     const renderIdentity = createRenderIdentityRegistry();
+    const renderGenerations = createRenderGenerationTracker();
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
     const setDetailsVisible = (visible) => {
@@ -93,7 +95,13 @@
     const markToPlot = (mark, data) => {
       const factory = Plot[mark.type];
       if (typeof factory !== 'function') throw new Error(`unsupported mark ${mark.type}`);
-      return factory(data, mark.options || {});
+      return factory(data, {
+        ...(mark.options || {}),
+        className: markClass(mark.id),
+        render(index, scales, values, dimensions, context, next) {
+          return annotateDetachedPlotLayer(next(index, scales, values, dimensions, context), mark);
+        }
+      });
     };
     const plotData = (rows) => rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'string' && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) ? new Date(value) : value])));
     const svgElement = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
@@ -176,7 +184,7 @@
       });
     }
     function renderPrimitiveLayer(layer, width, height, svg, animate) {
-      const group = svgElement('g'); group.setAttribute('data-primitive', layer.id);
+      const group = svgElement('g'); group.setAttribute('data-primitive', layer.id); group.dataset.markId = layer.id; group.dataset.markType = layer.type; group.dataset.renderer = 'primitive'; group.dataset.identityMode = layer.identity.identity_mode; group.dataset.layerKey = layer.identity.layer_key;
       const values = layer.values || []; const options = layer.options || {};
       if (layer.type === 'arc') {
         const radius = Math.max(1, Math.min(width, height) / 2 - 12);
@@ -187,7 +195,7 @@
           path.setAttribute('d', arc(row) || ''); path.setAttribute('transform', `translate(${cx},${cy})`);
           path.setAttribute('fill', primitiveColor(row.fill ?? row.color ?? options.fill, index));
           path.setAttribute('stroke', String(row.stroke ?? options.stroke ?? '#0d1117'));
-          path.setAttribute('stroke-width', String(options.strokeWidth ?? 1)); group.append(path);
+          path.setAttribute('stroke-width', String(options.strokeWidth ?? 1)); if (row.render_key) path.dataset.renderKey = row.render_key; group.append(path);
           if (animate) animateArc(path, arc, row, index);
           if (row.label !== undefined && row.label !== null && String(row.label).trim()) {
             const label = svgElement('text');
@@ -202,6 +210,7 @@
             label.setAttribute('text-anchor', 'middle');
             label.setAttribute('dominant-baseline', 'middle');
             label.setAttribute('pointer-events', 'none');
+            if (row.render_key) label.dataset.renderKey = `${row.render_key}:label`;
             const percent = Number(row.percent);
             label.textContent = Number.isFinite(percent) ? `${String(row.label)} ${Math.round(percent * 100)}%` : String(row.label);
             group.append(label);
@@ -211,25 +220,25 @@
       } else if (layer.type === 'circle') {
         values.forEach((row, index) => {
           const circle = svgElement('circle'); circle.setAttribute('cx', String(numeric(row._x))); circle.setAttribute('cy', String(numeric(row._y))); circle.setAttribute('r', String(Math.max(0, numeric(row._radius ?? row._size, 4))));
-          circle.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); if (row._stroke ?? options.stroke) circle.setAttribute('stroke', String(row._stroke ?? options.stroke)); group.append(circle);
+          circle.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); if (row._stroke ?? options.stroke) circle.setAttribute('stroke', String(row._stroke ?? options.stroke)); if (row.render_key) circle.dataset.renderKey = row.render_key; group.append(circle);
           if (animate) animatePrimitiveMark(circle, 'circle', index);
         });
       } else if (layer.type === 'line') {
         values.forEach((row, index) => {
-          const line = svgElement('line'); line.setAttribute('x1', String(numeric(row._x1 ?? row._x))); line.setAttribute('y1', String(numeric(row._y1 ?? row._y))); line.setAttribute('x2', String(numeric(row._x2 ?? row._x))); line.setAttribute('y2', String(numeric(row._y2 ?? row._y))); line.setAttribute('stroke', String(row._stroke ?? options.stroke ?? primitiveColor(row._color, index))); line.setAttribute('stroke-width', String(options.strokeWidth ?? 2)); group.append(line);
+          const line = svgElement('line'); line.setAttribute('x1', String(numeric(row._x1 ?? row._x))); line.setAttribute('y1', String(numeric(row._y1 ?? row._y))); line.setAttribute('x2', String(numeric(row._x2 ?? row._x))); line.setAttribute('y2', String(numeric(row._y2 ?? row._y))); line.setAttribute('stroke', String(row._stroke ?? options.stroke ?? primitiveColor(row._color, index))); line.setAttribute('stroke-width', String(options.strokeWidth ?? 2)); if (row.render_key) line.dataset.renderKey = row.render_key; group.append(line);
           if (animate) animatePrimitiveMark(line, 'line', index);
         });
       } else if (layer.type === 'rect') {
         values.forEach((row, index) => {
-          const rect = svgElement('rect'); const x = numeric(row._x); const y = numeric(row._y); const x2 = numeric(row._x2, x + numeric(row._width, 10)); const y2 = numeric(row._y2, y + numeric(row._height, 10)); rect.setAttribute('x', String(Math.min(x, x2))); rect.setAttribute('y', String(Math.min(y, y2))); rect.setAttribute('width', String(Math.abs(x2 - x))); rect.setAttribute('height', String(Math.abs(y2 - y))); rect.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); group.append(rect);
+          const rect = svgElement('rect'); const x = numeric(row._x); const y = numeric(row._y); const x2 = numeric(row._x2, x + numeric(row._width, 10)); const y2 = numeric(row._y2, y + numeric(row._height, 10)); rect.setAttribute('x', String(Math.min(x, x2))); rect.setAttribute('y', String(Math.min(y, y2))); rect.setAttribute('width', String(Math.abs(x2 - x))); rect.setAttribute('height', String(Math.abs(y2 - y))); rect.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); if (row.render_key) rect.dataset.renderKey = row.render_key; group.append(rect);
           if (animate) animatePrimitiveMark(rect, 'rect', index);
         });
       } else if (layer.type === 'path') {
-        const path = svgElement('path'); path.setAttribute('d', String(options.d)); if (options.fill !== undefined) path.setAttribute('fill', String(options.fill)); if (options.stroke !== undefined) path.setAttribute('stroke', String(options.stroke)); group.append(path); if (animate) animatePrimitiveMark(path, 'path');
+        const path = svgElement('path'); path.setAttribute('d', String(options.d)); if (options.fill !== undefined) path.setAttribute('fill', String(options.fill)); if (options.stroke !== undefined) path.setAttribute('stroke', String(options.stroke)); if (values[0]?.render_key) path.dataset.renderKey = values[0].render_key; group.append(path); if (animate) animatePrimitiveMark(path, 'path');
       } else if (layer.type === 'text') {
-        values.forEach((row, index) => { const text = svgElement('text'); text.setAttribute('x', String(numeric(row._x))); text.setAttribute('y', String(numeric(row._y))); text.setAttribute('fill', String(row._fill ?? options.fill ?? '#edf3fb')); text.textContent = String(row._text ?? ''); group.append(text); if (animate) animatePrimitiveMark(text, 'text', index); });
+        values.forEach((row, index) => { const text = svgElement('text'); text.setAttribute('x', String(numeric(row._x))); text.setAttribute('y', String(numeric(row._y))); text.setAttribute('fill', String(row._fill ?? options.fill ?? '#edf3fb')); text.textContent = String(row._text ?? ''); if (row.render_key) text.dataset.renderKey = row.render_key; group.append(text); if (animate) animatePrimitiveMark(text, 'text', index); });
       } else if (layer.type === 'area') {
-        const points = values.map((row) => [numeric(row._x), numeric(row._y)]); if (points.length) { const path = svgElement('path'); path.setAttribute('d', `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`); path.setAttribute('fill', String(options.fill ?? '#6bd8c4')); path.setAttribute('fill-opacity', String(options.fillOpacity ?? 0.35)); group.append(path); if (animate) animatePrimitiveMark(path, 'area'); }
+        const points = values.map((row) => [numeric(row._x), numeric(row._y)]); if (points.length) { const path = svgElement('path'); path.setAttribute('d', `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`); path.setAttribute('fill', String(options.fill ?? '#6bd8c4')); path.setAttribute('fill-opacity', String(options.fillOpacity ?? 0.35)); if (values[0]?.render_key) path.dataset.renderKey = values[0].render_key; group.append(path); if (animate) animatePrimitiveMark(path, 'area'); }
       }
       svg.append(group);
     }
@@ -250,10 +259,12 @@
     const visualLayout = (visual) => visual.layout || { x: 0, y: 0, w: 480, h: 320 };
 
     async function render(id, workId = workForVisual(id)) {
+      const requestGeneration = renderGenerations.request(id);
       const url = '/api/visual/' + encodeURIComponent(id) + (workId ? `?work_id=${encodeURIComponent(workId)}` : '');
       const response = await fetch(url);
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
       const payload = await response.json();
+      if (!renderGenerations.accepts(id, requestGeneration)) return;
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
       const animate = !workId && shouldAnimateVisual(visual);
@@ -289,8 +300,8 @@
           const layout = visualLayout(visual); const width = Math.max(220, layout.w - 16); const height = Math.max(120, layout.h - 48);
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, animate);
-          plot.replaceChildren(svg);
-          if (animate) animatePlotMarks(svg);
+          const reconciliation = reconcilePlotViewport(plot, svg, visual, payload.result.artifact);
+          if (animate && reconciliation.initial) animatePlotMarks(reconciliation.viewport);
         }
       } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);

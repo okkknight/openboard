@@ -142,6 +142,18 @@ test("serves browser render identity metadata without DOM inference", async () =
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves the keyed SVG reconciliation module to the browser", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "reconcile-asset", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const reconciler = await fetch(`http://127.0.0.1:${server.port}/assets/render-reconciler.js`).then((response) => response.text());
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(reconciler, /reconcilePlotViewport/);
+    assert.match(html, /reconcilePlotViewport\(plot, svg, visual, payload\.result\.artifact\)/);
+    assert.match(html, /renderGenerations\.accepts/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a local Plot bundle and a rendered visual payload", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "render", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } });
