@@ -37,6 +37,18 @@ test("serves a reversible Canvas details toggle", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("keeps Canvas details hidden on first load", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "details-default", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /<main id="canvas-layout" class="details-hidden">/);
+    assert.match(html, /<button id="show-details" type="button" aria-controls="canvas-details">Show details<\/button>/);
+    assert.match(html, /<aside id="canvas-details" aria-label="Canvas details" hidden>/);
+    assert.match(html, /aria-expanded="false">Show details|aria-expanded="false"/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a vivid categorical palette for Plot marks", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "palette", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);

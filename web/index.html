@@ -52,11 +52,11 @@
     <span class="brand">OpenBoard</span><span class="eyebrow">Data Canvas</span>
     <span id="connection" class="status">Connecting…</span><span class="spacer"></span>
     <span id="revision" class="revision" data-testid="revision">Revision 0</span>
-    <button id="show-details" type="button" aria-controls="canvas-details" hidden>Show details</button><button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
+    <button id="show-details" type="button" aria-controls="canvas-details">Show details</button><button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
   </header>
-  <main id="canvas-layout">
+  <main id="canvas-layout" class="details-hidden">
     <section id="viewport" aria-label="Data canvas viewport"><div id="board"></div><div id="empty">No visuals yet. Ask Codex to paint the first view.</div></section>
-    <aside id="canvas-details" aria-label="Canvas details"><div class="details-heading"><h1>Canvas details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="true">Hide</button></div><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
+    <aside id="canvas-details" aria-label="Canvas details" hidden><div class="details-heading"><h1>Canvas details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="false">Hide</button></div><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
   </main>
   <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
   <script type="module">
@@ -318,6 +318,7 @@
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
     toggleDetails.addEventListener('click', () => setDetailsVisible(false));
     showDetails.addEventListener('click', () => setDetailsVisible(true));
+    setDetailsVisible(false);
     let socket = null;
     let reconnectTimer = null;
     let reconnectDelay = 250;
