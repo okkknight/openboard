@@ -19,6 +19,7 @@
     button:hover { border-color: var(--accent); }
     .revision { color: var(--muted); font-variant-numeric: tabular-nums; }
     main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: calc(100vh - 64px); }
+    main.details-hidden { grid-template-columns: minmax(0, 1fr); }
     #viewport { position: relative; overflow: auto; background: radial-gradient(circle at 1px 1px, #202b38 1px, transparent 0) 0 0 / 24px 24px; }
     #board { position: relative; min-width: 1200px; min-height: 900px; transform-origin: 0 0; }
     .visual-card { position: absolute; overflow: hidden; min-width: 260px; min-height: 180px; border: 1px solid var(--line); border-radius: 12px; background: rgba(21,27,36,.97); box-shadow: 0 14px 30px rgba(0,0,0,.22); transition: border-color .15s, box-shadow .15s; }
@@ -34,7 +35,9 @@
     .kpi-value { font-size: 38px; font-weight: 700; color: var(--accent); }
     .visual-error { margin: 22px; color: #f39a9f; }
     aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px; }
-    aside h1 { margin: 0 0 6px; font-size: 14px; }
+    .details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+    .details-heading h1 { margin: 0; font-size: 14px; }
+    .details-heading button { padding: 4px 8px; font-size: 12px; }
     aside p { margin: 0 0 18px; color: var(--muted); }
     .annotation { padding: 10px 0; border-top: 1px solid var(--line); }
     .annotation strong { display: block; color: var(--focus); font-size: 12px; margin-bottom: 3px; }
@@ -47,11 +50,11 @@
     <span class="brand">OpenBoard</span><span class="eyebrow">Data Canvas</span>
     <span id="connection" class="status">Connecting…</span><span class="spacer"></span>
     <span id="revision" class="revision" data-testid="revision">Revision 0</span>
-    <button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
+    <button id="show-details" type="button" aria-controls="canvas-details" hidden>Show details</button><button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
   </header>
-  <main>
+  <main id="canvas-layout">
     <section id="viewport" aria-label="Data canvas viewport"><div id="board"></div><div id="empty">No visuals yet. Ask Codex to paint the first view.</div></section>
-    <aside aria-label="Canvas details"><h1>Canvas details</h1><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
+    <aside id="canvas-details" aria-label="Canvas details"><div class="details-heading"><h1>Canvas details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="true">Hide</button></div><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
   </main>
   <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
   <script type="module">
@@ -62,10 +65,20 @@
     const revision = document.querySelector('#revision');
     const canvasMeta = document.querySelector('#canvas-meta');
     const annotations = document.querySelector('#annotations');
+    const canvasLayout = document.querySelector('#canvas-layout');
+    const canvasDetails = document.querySelector('#canvas-details');
+    const toggleDetails = document.querySelector('#toggle-details');
+    const showDetails = document.querySelector('#show-details');
     let scene = null;
     let zoom = 1;
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
+    const setDetailsVisible = (visible) => {
+      canvasLayout.classList.toggle('details-hidden', !visible);
+      canvasDetails.hidden = !visible;
+      toggleDetails.setAttribute('aria-expanded', String(visible));
+      showDetails.hidden = visible;
+    };
     const cardFor = (id) => board.querySelector(`[data-visual="${CSS.escape(id)}"]`);
     const applyLayout = (card, layout) => { card.style.left = `${layout.x}px`; card.style.top = `${layout.y}px`; card.style.width = `${layout.w}px`; card.style.height = `${layout.h}px`; };
     const markToPlot = (mark, data) => {
@@ -185,6 +198,8 @@
     }
     document.querySelector('#fit').addEventListener('click', () => { const cards = [...board.querySelectorAll('.visual-card')]; if (!cards.length) return; const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width))); const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height))); zoom = Math.min(1, (viewport.clientWidth - 48) / right, (viewport.clientHeight - 48) / bottom); board.style.transform = `scale(${zoom})`; });
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
+    toggleDetails.addEventListener('click', () => setDetailsVisible(false));
+    showDetails.addEventListener('click', () => setDetailsVisible(true));
     await reloadScene();
     const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
     socket.addEventListener('open', () => setConnection('Connected', true));

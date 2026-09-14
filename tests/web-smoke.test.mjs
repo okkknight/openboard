@@ -26,6 +26,17 @@ test("serves the spatial canvas controls and connection indicator", async () => 
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves a reversible Canvas details toggle", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "details-toggle", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /id="toggle-details"/);
+    assert.match(html, /aria-controls="canvas-details"/);
+    assert.match(html, /details-hidden/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a vivid categorical palette for Plot marks", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "palette", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
