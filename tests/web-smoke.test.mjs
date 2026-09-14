@@ -81,10 +81,14 @@ test("broadcasts a visual mutation revision over WebSocket", async () => {
     const event = await new Promise((resolve, reject) => {
       const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
       socket.once("open", async () => { await runtime.visualPatch("v1", { set: { title: "Patched" } }); });
-      socket.once("message", (data) => { socket.close(); resolve(JSON.parse(data.toString())); });
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.type === "work.completed" && message.revision === 2) { socket.close(); resolve(message); }
+      });
       socket.once("error", reject);
     });
-    assert.deepEqual(event, { type: "visual.changed", canvas_id: "socket", revision: 2, visual_id: "v1" });
+    assert.equal(event.type, "work.completed");
+    assert.equal(event.revision, 2);
   } finally { await server.close(); runtime.close(); }
 });
 

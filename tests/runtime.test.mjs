@@ -24,7 +24,8 @@ test("creates then patches the same visual and emits its new revision", async ()
   const patched = await runtime.visualPatch("v1", { set: { title: "Orders by channel" } }, created.revision);
   assert.equal(patched.result.visual.id, "v1");
   assert.equal(patched.revision, 2);
-  assert.deepEqual(events.map((event) => event.type), ["visual.created", "visual.changed"]);
+  assert.equal(created.revision, 1);
+  assert.deepEqual(events.filter((event) => event.type.startsWith("work.")).map((event) => event.type).filter((type) => type === "work.completed"), ["work.completed", "work.completed"]);
   runtime.close();
 });
 
@@ -138,7 +139,7 @@ test("broadcasts scene events for composition, annotations, and history", async 
   await runtime.canvasCompose({ action: "move", target: "v1", layout: { x: 2, y: 3, w: 1, h: 1 } });
   await runtime.canvasAnnotate({ id: "a1", target: "v1", text: "note", created_at: "2026-09-10T00:00:00.000Z" });
   await runtime.historyApply({ action: "checkpoint", label: "m" });
-  assert.deepEqual(events.map((event) => event.type), ["visual.created", "focus.changed", "layout.changed", "annotation.created", "history.changed"]);
+  assert.deepEqual(events.filter((event) => !event.type.startsWith("work.")).map((event) => event.type), ["focus.changed", "layout.changed", "annotation.created", "history.changed"]);
   runtime.close();
 });
 

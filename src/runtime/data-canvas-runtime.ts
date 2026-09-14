@@ -115,58 +115,37 @@ export class DataCanvasRuntime {
   }
 
   async visualCreate(visual: VisualSpec | WorkingVisualDraft, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (workId) {
-      const work = this.#works.createDraft(workId, visual);
-      this.#clearWorkArtifact(workId, visual.id);
-      this.#emitWork("work.visual.changed", work, visual.id);
-      return this.#renderWorkingVisual(workId, visual.id);
+    if (!workId) {
+      return this.#implicitWork(expectedRevision, (id) => this.visualCreate(visual, undefined, id));
     }
-    if (!isCompleteVisual(visual)) throw new Error("invalid_spec: durable visual incomplete");
-    const payload = await this.#render(visual);
-    const mutation = this.#store.createVisual(visual, expectedRevision);
-    await this.#persist();
-    this.#artifacts.set(this.#artifactKey(visual.id, mutation.revision), { visual: mutation.visual, revision: mutation.revision, payload, generation: 0 });
-    const response = this.#response(mutation.visual, mutation.revision, payload);
-    this.#events.emit({ type: "visual.created", canvas_id: response.canvas_id, revision: response.revision, visual_id: visual.id });
-    return response;
+    const work = this.#works.createDraft(workId, visual);
+    this.#clearWorkArtifact(workId, visual.id);
+    this.#emitWork("work.visual.changed", work, visual.id);
+    return this.#renderWorkingVisual(workId, visual.id);
   }
 
   async visualPatch(id: string, patch: VisualPatch, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (workId) {
-      const work = this.#works.patchVisual(workId, id, patch, this.#store.inspect());
-      this.#clearWorkArtifact(workId, id);
-      this.#emitWork("work.visual.changed", work, id);
-      return this.#renderWorkingVisual(workId, id);
+    if (!workId) {
+      return this.#implicitWork(expectedRevision, (work) => this.visualPatch(id, patch, undefined, work));
     }
-    const preview = this.#store.previewPatch(id, patch);
-    const payload = await this.#render(preview);
-    const mutation = this.#store.patchVisual(id, patch, expectedRevision);
-    await this.#persist();
-    this.#artifacts.set(this.#artifactKey(id, mutation.revision), { visual: mutation.visual, revision: mutation.revision, payload, generation: 0 });
-    const response = this.#response(mutation.visual, mutation.revision, payload);
-    this.#events.emit({ type: "visual.changed", canvas_id: response.canvas_id, revision: response.revision, visual_id: id });
-    return response;
+    const work = this.#works.patchVisual(workId, id, patch, this.#store.inspect());
+    this.#clearWorkArtifact(workId, id);
+    this.#emitWork("work.visual.changed", work, id);
+    return this.#renderWorkingVisual(workId, id);
   }
 
   async visualClone(id: string, newId: string, patch?: VisualPatch, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (workId) {
-      const source = this.#works.effectiveScene(workId, this.#store.inspect()).visuals[id];
-      if (!source) throw new Error(`not_found: visual ${id}`);
-      const copy = { ...structuredClone(source), id: newId, derived_from: id } as WorkingVisualDraft;
-      let work = this.#works.createDraft(workId, copy);
-      if (patch) work = this.#works.patchVisual(workId, newId, patch, this.#store.inspect());
-      this.#clearWorkArtifact(workId, newId);
-      this.#emitWork("work.visual.changed", work, newId);
-      return this.#renderWorkingVisual(workId, newId);
+    if (!workId) {
+      return this.#implicitWork(expectedRevision, (work) => this.visualClone(id, newId, patch, undefined, work));
     }
-    const preview = this.#store.previewClone(id, newId, patch);
-    const payload = await this.#render(preview);
-    const mutation = this.#store.cloneVisual(id, newId, patch, expectedRevision);
-    await this.#persist();
-    this.#artifacts.set(this.#artifactKey(newId, mutation.revision), { visual: mutation.visual, revision: mutation.revision, payload, generation: 0 });
-    const response = this.#response(mutation.visual, mutation.revision, payload);
-    this.#events.emit({ type: "visual.created", canvas_id: response.canvas_id, revision: response.revision, visual_id: newId });
-    return response;
+    const source = this.#works.effectiveScene(workId, this.#store.inspect()).visuals[id];
+    if (!source) throw new Error(`not_found: visual ${id}`);
+    const copy = { ...structuredClone(source), id: newId, derived_from: id } as WorkingVisualDraft;
+    let work = this.#works.createDraft(workId, copy);
+    if (patch) work = this.#works.patchVisual(workId, newId, patch, this.#store.inspect());
+    this.#clearWorkArtifact(workId, newId);
+    this.#emitWork("work.visual.changed", work, newId);
+    return this.#renderWorkingVisual(workId, newId);
   }
 
   async canvasCompose(input: ComposeInput, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
@@ -217,6 +196,21 @@ export class DataCanvasRuntime {
     const changed = this.#works.next(workId);
     this.#emitWork("work.visual.changed", changed, id);
     return this.#response(artifact.visual, artifact.revision, artifact.payload);
+  }
+
+  async #implicitWork<T extends { revision: number }>(expectedRevision: number | undefined, operation: (workId: string) => Promise<T>): Promise<T> {
+    const durable = this.#store.inspect();
+    if (expectedRevision !== undefined && expectedRevision !== durable.revision) throw new RevisionConflictError(expectedRevision, durable.revision);
+    const work = this.#works.begin(durable);
+    this.#emitWork("work.started", work);
+    try {
+      const result = await operation(work.id);
+      const committed = await this.workApply({ action: "commit", work_id: work.id });
+      return { ...result, revision: committed.revision };
+    } catch (error) {
+      try { this.#works.get(work.id); await this.workApply({ action: "cancel", work_id: work.id }); } catch { /* terminal work or failed cleanup */ }
+      throw error;
+    }
   }
 
   async #artifactFor(key: string, visual: VisualSpec, revision: number, workId?: string): Promise<RenderArtifact> {

@@ -36,10 +36,32 @@ function unsetPath(target: Record<string, unknown>, path: string): void {
   delete cursor[segments.at(-1)!];
 }
 
+function setVisualPath(target: Record<string, unknown>, path: string, value: unknown): void {
+  const markPath = /^marks\.([^\.]+)(?:\.(.*))?$/.exec(path);
+  if (markPath && Array.isArray(target.marks)) {
+    const mark = target.marks.find((candidate) => candidate && typeof candidate === "object" && String((candidate as { id?: unknown }).id) === markPath[1]);
+    if (!mark) throw new Error(`not_found: mark ${markPath[1]}`);
+    if (markPath[2]) setPath(mark as Record<string, unknown>, markPath[2], value);
+    else throw new Error(`invalid_patch: mark path ${path}`);
+    return;
+  }
+  setPath(target, path, value);
+}
+
+function unsetVisualPath(target: Record<string, unknown>, path: string): void {
+  const markPath = /^marks\.([^\.]+)(?:\.(.*))?$/.exec(path);
+  if (markPath && Array.isArray(target.marks)) {
+    const mark = target.marks.find((candidate) => candidate && typeof candidate === "object" && String((candidate as { id?: unknown }).id) === markPath[1]);
+    if (mark && markPath[2]) unsetPath(mark as Record<string, unknown>, markPath[2]);
+    return;
+  }
+  unsetPath(target, path);
+}
+
 function applyWorkingPatch(visual: WorkingVisual, patch: VisualPatch): WorkingVisualDraft {
   const next = asRecord(visual);
-  for (const [path, value] of Object.entries(patch.set ?? {})) setPath(next, path, value);
-  for (const path of patch.unset ?? []) unsetPath(next, path);
+  for (const [path, value] of Object.entries(patch.set ?? {})) setVisualPath(next, path, value);
+  for (const path of patch.unset ?? []) unsetVisualPath(next, path);
   const currentMarks = Array.isArray(next.marks) ? next.marks as Array<{ id?: unknown }> : [];
   const removed = new Set(patch.remove_marks ?? []);
   next.marks = currentMarks.filter((mark) => !removed.has(String(mark.id)));

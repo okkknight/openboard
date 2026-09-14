@@ -22,7 +22,7 @@ For a request that creates a visual or needs more than one meaningful analysis o
 - Emit a semantic patch only after a real new data, analysis, or expression state. Do not split axes, bars, labels, or animation frames merely to make motion.
 - Runtime activity comes only from real inspect/query/render operations. Never send fake progress, “thinking”, or chain-of-thought narration to the canvas.
 - Finish a successful multi-step operation with `work.apply({ action: "commit", work_id })`; if it cannot be completed, use `cancel`. Work patches are ephemeral until commit.
-- A simple, expected one-step edit of an existing visual may use the legacy no-`work_id` `visual.patch` path. Do not add work-session overhead to every instantaneous change.
+- A caller may omit `work_id` for a single-step API call; the runtime wraps it in an implicit WorkSession. Multi-step analysis should use one explicit `work_id` from begin through commit/cancel.
 
 ## Required reading before coding
 

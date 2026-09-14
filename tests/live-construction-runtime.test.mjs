@@ -70,6 +70,25 @@ test("emits a working visual before its real query resolves", async () => {
   runtime.close();
 });
 
+test("direct visual creation also exposes working state before a slow render", async () => {
+  const gate = deferred();
+  const engine = new SlowQueryEngine(gate);
+  const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+
+  const pending = runtime.visualCreate(fullVisual());
+  await waitFor(() => events.some((event) => event.type === "work.visual.changed"));
+  assert.equal(runtime.inspect().visuals["channel-orders"], undefined);
+  assert.equal(events.some((event) => event.type === "work.activity" && event.activity?.kind === "render" && event.activity?.status === "completed"), false);
+
+  gate.release();
+  const result = await pending;
+  assert.equal(result.revision, 21);
+  assert.equal(runtime.inspect().visuals["channel-orders"].title, "Orders by channel");
+  runtime.close();
+});
+
 test("commits multiple work operations as one durable revision and cancels without mutation", async () => {
   const runtime = new DataCanvasRuntime(scene());
   const first = await runtime.workApply({ action: "begin" });

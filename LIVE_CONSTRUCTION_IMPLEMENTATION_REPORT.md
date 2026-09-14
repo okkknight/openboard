@@ -11,7 +11,7 @@
 
 ## B. 仍保留的实现差异
 
-- 不带 `work_id` 的旧 `visual.create`、`visual.patch`、`visual.clone` 保持原有同步兼容路径：先完成 render，后做 durable mutation/event。LC0/LC1 的“先可见状态、后 render”保证只适用于显式 WorkSession 路径。
+- 单步调用如果省略 `work_id`，runtime 会自动创建并完成一个隐式 WorkSession；因此不存在另一条视觉变更时序。
 - visual 内部仍是 rebuild-mode SVG；working 更新禁用了长 entrance replay，但 retained mark scenegraph 是 LC2 工作。
 - DuckDB 仍是完整 query/materialization；没有 row streaming。
 
@@ -61,4 +61,4 @@ artifact 以 durable revision 或 work scope + visual id 区分。相同有效 v
 
 - Codex 何时决定发出第一个 `work.apply(begin)` 属于 agent 决策时间，runtime 无法控制；一旦 begin 到达，working 状态立即进入 Runtime/WebSocket。
 - 浏览器仍使用完整 SVG rebuild；LC1 避免工作态长动画重播，但不承诺逐 mark retained-diff。
-- **当前系统仍存在 render-before-visible-state 路径：YES。** 为兼容旧模式，未带 `work_id` 的 `visual.create`、`visual.patch`、`visual.clone` 仍是先 render 后 durable event；所有显式 WorkSession 路径均已改为先工作态可见、后真实 render。
+- **当前系统仍存在 render-before-visible-state 路径：NO。** `visual.create`、`visual.patch`、`visual.clone` 无论显式传入还是省略 `work_id`，都先进入 Working Overlay 并发出 working event，再执行真实 render；省略 `work_id` 只是由 runtime 自动包裹一次 WorkSession。
