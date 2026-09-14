@@ -14,6 +14,16 @@ Given local data files, let Codex dynamically express data reasoning on a persis
 
 The visible result should update immediately without regenerating HTML or rebuilding a dashboard.
 
+## Live Construction policy (LC0 + LC1)
+
+For a request that creates a visual or needs more than one meaningful analysis operation, begin with `work.apply({ action: "begin" })` before invisible inspect/query work. Use the returned `work_id` for related `data.inspect`, `data.query`, `visual.create`, `visual.patch`, `visual.clone`, `canvas.compose`, and `canvas.annotate` calls.
+
+- Once there is a real initial analysis intent, create an early draft visual. A draft may contain only title/intent; do not pretend it has a result.
+- Emit a semantic patch only after a real new data, analysis, or expression state. Do not split axes, bars, labels, or animation frames merely to make motion.
+- Runtime activity comes only from real inspect/query/render operations. Never send fake progress, “thinking”, or chain-of-thought narration to the canvas.
+- Finish a successful multi-step operation with `work.apply({ action: "commit", work_id })`; if it cannot be completed, use `cancel`. Work patches are ephemeral until commit.
+- A simple, expected one-step edit of an existing visual may use the legacy no-`work_id` `visual.patch` path. Do not add work-session overhead to every instantaneous change.
+
 ## Required reading before coding
 
 1. `docs/superpowers/specs/2026-09-09-data-canvas-v1-design.md`
@@ -42,6 +52,7 @@ The spec is authoritative. The plan may be adjusted only when implementation evi
 - Keep core contracts independent from DuckDB, MCP, Plot and browser code.
 - Prefer small files with one responsibility.
 - Every MCP tool handler should translate validated input into a core runtime call; business logic does not live in tool registration.
+- `SceneStore` owns durable Scene/history only; `WorkSessionStore` owns ephemeral overlays, ordered work events, and render artifacts only.
 - Every scene mutation increments revision exactly once.
 - Tool outputs include `canvas_id`, `revision`, `status`, and structured result/observation when applicable.
 

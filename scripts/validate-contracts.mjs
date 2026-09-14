@@ -9,8 +9,8 @@ const events = JSON.parse(await readFile(new URL("../contracts/events.schema.jso
 assert.equal(scene.title, "Data Canvas Scene");
 assert.equal(output.title, "Data Canvas Tool Output");
 assert.equal(events.title, "Data Canvas Scene Event");
-assert.equal(tools.tool_count, 9);
-assert.equal(tools.tools.length, 9);
+assert.equal(tools.tool_count, 10);
+assert.equal(tools.tools.length, 10);
 const names = tools.tools.map((tool) => tool.name);
 assert.deepEqual(names, [
   "canvas.inspect",
@@ -21,7 +21,8 @@ assert.deepEqual(names, [
   "visual.clone",
   "canvas.compose",
   "canvas.annotate",
-  "history.apply"
+  "history.apply",
+  "work.apply"
 ]);
 assert.equal(new Set(names).size, names.length);
-console.log("contracts ok: scene + outputs + events, 9 unique tools");
+console.log("contracts ok: scene + outputs + events, 10 unique tools");

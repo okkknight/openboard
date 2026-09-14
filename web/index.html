@@ -33,6 +33,8 @@
     .plot th, .plot td { padding: 5px 7px; border-bottom: 1px solid var(--line); text-align: left; }
     .plot th { color: var(--muted); font-weight: 600; }
     .kpi-value { font-size: 38px; font-weight: 700; color: var(--accent); }
+    .working-frame { align-self: stretch; min-height: 118px; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 14px; color: var(--muted); border-left: 2px solid var(--accent); }
+    .working-frame strong { color: var(--text); font-size: 13px; font-weight: 600; }
     .visual-error { margin: 22px; color: #f39a9f; }
     aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px; }
     .details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
@@ -58,6 +60,7 @@
   </main>
   <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
   <script type="module">
+    import { acceptWorkEvent } from '/assets/work-event-order.js';
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -69,9 +72,12 @@
     const canvasDetails = document.querySelector('#canvas-details');
     const toggleDetails = document.querySelector('#toggle-details');
     const showDetails = document.querySelector('#show-details');
+    let durableScene = null;
     let scene = null;
     let zoom = 1;
     const renderedVisualSignatures = new Map();
+    const activeWorks = new Map();
+    const lastSequence = new Map();
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
     const setDetailsVisible = (visible) => {
@@ -226,13 +232,28 @@
       svg.append(group);
     }
 
-    async function render(id) {
-      const response = await fetch('/api/visual/' + encodeURIComponent(id));
+    function mergeEffectiveScene() {
+      const merged = structuredClone(durableScene);
+      for (const work of activeWorks.values()) {
+        const overlay = work.overlay;
+        for (const id of overlay.removed_visual_ids || []) delete merged.visuals[id];
+        for (const [id, visual] of Object.entries(overlay.visuals || {})) merged.visuals[id] = structuredClone(visual);
+        for (const id of overlay.removed_annotation_ids || []) delete merged.annotations[id];
+        for (const [id, annotation] of Object.entries(overlay.annotations || {})) merged.annotations[id] = structuredClone(annotation);
+        if (overlay.canvas) merged.canvas = structuredClone(overlay.canvas);
+      }
+      return merged;
+    }
+    const workForVisual = (id) => [...activeWorks.values()].find((work) => work.overlay.visuals?.[id] || work.overlay.removed_visual_ids?.includes(id))?.id;
+    const visualLayout = (visual) => visual.layout || { x: 0, y: 0, w: 480, h: 320 };
+
+    async function render(id, workId = workForVisual(id)) {
+      const url = '/api/visual/' + encodeURIComponent(id) + (workId ? `?work_id=${encodeURIComponent(workId)}` : '');
+      const response = await fetch(url);
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
       const payload = await response.json();
       const visual = payload.result.visual;
-      const animate = shouldAnimateVisual(visual);
-      if (scene && Number.isInteger(payload.revision) && payload.revision >= scene.revision) { scene.revision = payload.revision; revision.textContent = `Revision ${scene.revision}`; }
+      const animate = !workId && shouldAnimateVisual(visual);
       let card = cardFor(id);
       if (!card) {
         card = document.createElement('article'); card.className = 'visual-card'; card.dataset.visual = id;
@@ -242,11 +263,19 @@
         head.append(title, visualId); card.append(head, Object.assign(document.createElement('div'), { className: 'plot' })); board.append(card);
       }
       card.querySelector('.visual-title').textContent = visual.title || id;
-      applyLayout(card, visual.layout);
+      applyLayout(card, visualLayout(visual));
       const plot = card.querySelector('.plot');
       try {
         const renderRows = plotData(payload.result.plot.data);
-        if (visual.kind === 'table') {
+        if (payload.status === 'working') {
+          const dimensions = visual.query?.dimensions?.map((item) => item.alias || item.field).join(' · ');
+          const activity = activeWorks.get(workId)?.activity?.label;
+          const frame = document.createElement('div'); frame.className = 'working-frame';
+          frame.append(Object.assign(document.createElement('strong'), { textContent: visual.title || id }));
+          if (dimensions) frame.append(Object.assign(document.createElement('span'), { textContent: dimensions }));
+          if (activity) frame.append(Object.assign(document.createElement('span'), { textContent: activity }));
+          plot.replaceChildren(frame);
+        } else if (visual.kind === 'table') {
           const table = document.createElement('table'); const fields = payload.result.columns;
           const head = document.createElement('tr'); fields.forEach((field) => head.append(Object.assign(document.createElement('th'), { textContent: field }))); const thead = document.createElement('thead'); thead.append(head); table.append(thead);
           const body = document.createElement('tbody'); payload.result.plot.data.forEach((row) => { const tr = document.createElement('tr'); fields.forEach((field) => tr.append(Object.assign(document.createElement('td'), { textContent: row[field] == null ? '' : String(row[field]) }))); body.append(tr); }); table.append(body); plot.replaceChildren(table);
@@ -254,7 +283,7 @@
           const first = payload.result.plot.data[0] || {}; const value = Object.values(first)[0] ?? payload.result.rows;
           plot.replaceChildren(Object.assign(document.createElement('div'), { className: 'kpi-value', textContent: String(value) }));
         } else {
-          const width = Math.max(220, visual.layout.w - 16); const height = Math.max(120, visual.layout.h - 48);
+          const layout = visualLayout(visual); const width = Math.max(220, layout.w - 16); const height = Math.max(120, layout.h - 48);
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, animate);
           plot.replaceChildren(svg);
@@ -266,17 +295,24 @@
     }
 
     function updateScene(next) {
-      scene = next; revision.textContent = `Revision ${scene.revision}`;
+      scene = next; revision.textContent = `Revision ${durableScene.revision}`;
       canvasMeta.textContent = `${Object.keys(scene.visuals).length} visual${Object.keys(scene.visuals).length === 1 ? '' : 's'} · ${Object.keys(scene.datasets).length} dataset${Object.keys(scene.datasets).length === 1 ? '' : 's'}`;
       annotations.replaceChildren(...Object.values(scene.annotations).map((annotation) => { const item = document.createElement('div'); item.className = 'annotation'; item.innerHTML = '<strong>Note</strong>'; item.append(document.createTextNode(annotation.text)); return item; }));
-      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visual.layout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
+      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual)); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
     }
 
-    async function reloadScene() {
-      updateScene(await fetch('/api/scene').then((response) => response.json()));
+    async function renderEffectiveScene() {
+      updateScene(mergeEffectiveScene());
       for (const card of board.querySelectorAll('.visual-card')) if (!scene.visuals[card.dataset.visual]) card.remove();
-      await Promise.all(Object.keys(scene.visuals).map(render));
+      await Promise.all(Object.keys(scene.visuals).map((id) => render(id)));
       empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+    }
+    async function reloadScene() {
+      const [nextDurable, workSnapshot] = await Promise.all([fetch('/api/scene').then((response) => response.json()), fetch('/api/works').then((response) => response.json())]);
+      durableScene = nextDurable;
+      activeWorks.clear();
+      for (const snapshot of workSnapshot.works) activeWorks.set(snapshot.work.id, snapshot.work);
+      await renderEffectiveScene();
     }
     document.querySelector('#fit').addEventListener('click', () => { const cards = [...board.querySelectorAll('.visual-card')]; if (!cards.length) return; const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width))); const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height))); zoom = Math.min(1, (viewport.clientWidth - 48) / right, (viewport.clientHeight - 48) / bottom); board.style.transform = `scale(${zoom})`; });
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
@@ -309,6 +345,15 @@
       nextSocket.addEventListener('error', () => { if (socket === nextSocket) setConnection('Connection error', false); });
       nextSocket.addEventListener('message', async ({ data }) => {
         const event = JSON.parse(data);
+        if (event.type.startsWith('work.')) {
+          if (!acceptWorkEvent(lastSequence, event)) return;
+          if (event.type === 'work.completed' || event.type === 'work.cancelled') {
+            activeWorks.delete(event.work_id);
+            if (event.type === 'work.completed') durableScene = await fetch('/api/scene').then((response) => response.json());
+          } else if (event.work) activeWorks.set(event.work_id, event.work);
+          await renderEffectiveScene();
+          return;
+        }
         if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; }
         else if (event.visual_id) await render(event.visual_id);
         if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();

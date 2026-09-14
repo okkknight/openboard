@@ -9,6 +9,7 @@
       "enum": [
         "ok",
         "rendered",
+        "working",
         "render_limit_exceeded",
         "revision_conflict",
         "not_found",

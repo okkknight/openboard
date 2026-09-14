@@ -15,7 +15,14 @@
         "annotation.removed",
         "focus.changed",
         "layout.changed",
-        "history.changed"
+        "history.changed",
+        "work.started",
+        "work.activity",
+        "work.visual.changed",
+        "work.completed",
+        "work.cancelled",
+        "work.failed",
+        "work.snapshot"
       ]
     },
     "canvas_id": { "type": "string", "minLength": 1 },
@@ -23,7 +30,33 @@
     "visual_id": { "type": "string" },
     "annotation_id": { "type": "string" },
     "affected_ids": { "type": "array", "items": { "type": "string" } },
+    "work_id": { "type": "string" },
+    "base_revision": { "type": "integer", "minimum": 0 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "activity": {
+      "type": "object",
+      "required": ["kind", "status", "label"],
+      "properties": {
+        "kind": { "enum": ["inspect", "query", "render"] },
+        "status": { "enum": ["started", "completed", "failed"] },
+        "label": { "type": "string" },
+        "visual_id": { "type": "string" },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "work": { "type": "object" },
+    "effective_scene": { "type": "object" },
     "payload": { "type": "object" }
   },
+  "allOf": [{
+    "if": {
+      "properties": {
+        "type": { "enum": ["work.started", "work.activity", "work.visual.changed", "work.completed", "work.cancelled", "work.failed", "work.snapshot"] }
+      },
+      "required": ["type"]
+    },
+    "then": { "required": ["work_id", "base_revision", "sequence"] }
+  }],
   "additionalProperties": false
 }

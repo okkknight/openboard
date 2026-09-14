@@ -1,4 +1,4 @@
-import type { AnnotationSpec, CanvasState, EffectiveScene, Scene, VisualPatch, WorkingOverlay, WorkingVisual, WorkingVisualDraft, WorkSession, WorkStatus } from "../core/types.js";
+import type { AnnotationSpec, CanvasState, ComposeInput, EffectiveScene, Scene, VisualPatch, WorkingOverlay, WorkingVisual, WorkingVisualDraft, WorkSession, WorkStatus } from "../core/types.js";
 
 function clone<T>(value: T): T { return structuredClone(value); }
 
@@ -136,6 +136,47 @@ export class WorkSessionStore {
     const work = this.#require(workId); assertActive(work);
     work.overlay.annotations[annotation.id] = clone(annotation);
     work.overlay.removed_annotation_ids = work.overlay.removed_annotation_ids.filter((id) => id !== annotation.id);
+    work.overlay.operations += 1;
+    work.sequence += 1;
+    return clone(work);
+  }
+
+  compose(workId: string, input: ComposeInput, durable: Scene): WorkSession {
+    const work = this.#require(workId); assertActive(work);
+    const effective = this.effectiveScene(workId, durable);
+    const setVisual = (id: string, visual: WorkingVisual): void => { work.overlay.visuals[id] = clone(visual) as WorkingVisualDraft; };
+    if (input.action === "delete") {
+      if (!input.target || !effective.visuals[input.target]) throw new Error(`not_found: visual ${input.target}`);
+      delete work.overlay.visuals[input.target];
+      if (!work.overlay.removed_visual_ids.includes(input.target)) work.overlay.removed_visual_ids.push(input.target);
+      if (effective.canvas.focus === input.target) delete effective.canvas.focus;
+    } else if (input.action === "focus") {
+      if (!input.target || !effective.visuals[input.target]) throw new Error(`not_found: visual ${input.target}`);
+      effective.canvas.focus = input.target;
+    } else if (input.action === "move" || input.action === "resize") {
+      if (!input.target || !effective.visuals[input.target] || !input.layout) throw new Error("invalid_compose: target and layout required");
+      setVisual(input.target, { ...effective.visuals[input.target], layout: clone(input.layout) });
+    } else if (input.action === "group") {
+      if (!input.target || !input.targets?.length || input.targets.some((id) => !effective.visuals[id])) throw new Error("invalid_compose: group target and targets required");
+      effective.canvas.groups = (effective.canvas.groups ?? []).filter((group) => group.id !== input.target);
+      effective.canvas.groups.push({ id: input.target, visual_ids: [...input.targets] });
+    } else if (input.action === "ungroup") {
+      if (!input.target) throw new Error("invalid_compose: group target required");
+      effective.canvas.groups = (effective.canvas.groups ?? []).filter((group) => group.id !== input.target);
+    } else if (input.action === "arrange") {
+      if (!input.targets?.length || !input.arrangement) throw new Error("invalid_compose: targets and arrangement required");
+      const visuals = input.targets.map((id) => effective.visuals[id]);
+      if (visuals.some((visual) => !visual?.layout)) throw new Error("invalid_compose: layout required");
+      const first = visuals[0].layout!;
+      const columns = Math.ceil(Math.sqrt(visuals.length));
+      visuals.forEach((visual, index) => {
+        const layout = visual.layout!;
+        const x = input.arrangement === "grid" ? first.x + (index % columns) * first.w : input.arrangement === "column" ? first.x : first.x + index * layout.w;
+        const y = input.arrangement === "grid" ? first.y + Math.floor(index / columns) * first.h : input.arrangement === "column" ? first.y + index * layout.h : first.y;
+        setVisual(input.targets![index], { ...visual, layout: { ...layout, x, y } });
+      });
+    } else throw new Error(`unsupported_compose: ${input.action}`);
+    work.overlay.canvas = clone(effective.canvas);
     work.overlay.operations += 1;
     work.sequence += 1;
     return clone(work);

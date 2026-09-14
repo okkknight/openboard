@@ -9,19 +9,26 @@ export interface RunningWebServer { port: number; close(): Promise<void>; }
 
 export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/index.html");
+  const workOrderPath = join(dirname(fileURLToPath(import.meta.url)), "work-event-order.js");
   const d3Path = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/d3/dist/d3.min.js");
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.url === "/api/scene") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(runtime.inspect()));
       return;
     }
-    if (request.url?.startsWith("/api/visual/")) {
-      const id = decodeURIComponent(request.url.slice("/api/visual/".length));
+    if (url.pathname === "/api/works") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ works: runtime.inspectWorkSnapshots() }));
+      return;
+    }
+    if (url.pathname.startsWith("/api/visual/")) {
+      const id = decodeURIComponent(url.pathname.slice("/api/visual/".length));
       try {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(await runtime.renderVisual(id)));
+        response.end(JSON.stringify(await runtime.renderVisual(id, url.searchParams.get("work_id") ?? undefined)));
       } catch { response.writeHead(404).end(); }
       return;
     }
@@ -35,6 +42,11 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
       response.end(await readFile(d3Path));
       return;
     }
+    if (request.url === "/assets/work-event-order.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(workOrderPath));
+      return;
+    }
     if (request.url === "/favicon.ico") { response.writeHead(204).end(); return; }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -44,6 +56,11 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
     response.writeHead(404).end();
   });
   const websocket = new WebSocketServer({ noServer: true });
+  websocket.on("connection", (client) => {
+    for (const snapshot of runtime.inspectWorkSnapshots()) {
+      client.send(JSON.stringify({ type: "work.snapshot", canvas_id: snapshot.effective_scene.canvas_id, revision: snapshot.effective_scene.revision, work_id: snapshot.work.id, base_revision: snapshot.work.base_revision, sequence: snapshot.work.sequence, work: snapshot.work, effective_scene: snapshot.effective_scene }));
+    }
+  });
   server.keepAliveTimeout = 1;
   server.on("upgrade", (request, socket, head) => {
     if (request.url !== "/ws") { socket.destroy(); return; }

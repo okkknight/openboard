@@ -88,6 +88,24 @@ test("broadcasts a visual mutation revision over WebSocket", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves active work snapshots over HTTP and the WebSocket connection", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "work-snapshot", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const begun = await runtime.workApply({ action: "begin" });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const snapshot = await fetch(`http://127.0.0.1:${server.port}/api/works`).then((response) => response.json());
+    assert.equal(snapshot.works[0].work.id, begun.result.work_id);
+    const event = await new Promise((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+      socket.once("message", (data) => { socket.close(); resolve(JSON.parse(data.toString())); });
+      socket.once("error", reject);
+    });
+    assert.equal(event.type, "work.snapshot");
+    assert.equal(event.work_id, begun.result.work_id);
+    assert.equal(event.sequence, 1);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a local Plot bundle and a rendered visual payload", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "render", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } });

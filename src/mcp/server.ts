@@ -1,12 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
-import type { AnnotationSpec, ComposeInput, HistoryApplyInput, QuerySpec, VisualPatch, VisualSpec } from "../core/types.js";
+import type { AnnotationSpec, ComposeInput, HistoryApplyInput, QuerySpec, VisualPatch, VisualSpec, WorkingVisualDraft } from "../core/types.js";
 import { toolSchemas } from "./schemas.js";
 import { SUPPORTED_MARKS, SUPPORTED_PRIMITIVES } from "../render/plot-compiler.js";
 
 export const TOOL_NAMES = [
   "canvas.inspect", "data.inspect", "data.query", "visual.create", "visual.patch",
-  "visual.clone", "canvas.compose", "canvas.annotate", "history.apply"
+  "visual.clone", "canvas.compose", "canvas.annotate", "history.apply", "work.apply"
 ] as const;
 
 function textResult(value: unknown) {
@@ -58,25 +58,26 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
         }
         const request = input as Record<string, unknown>;
         if (name === "data.inspect") {
-          const dataset = await runtime.dataInspect(String(request.dataset), { fields: request.fields as string[] | undefined, top_k: request.top_k as number | undefined, sample_rows: request.sample_rows as number | undefined });
+          const dataset = await runtime.dataInspect(String(request.dataset), { fields: request.fields as string[] | undefined, top_k: request.top_k as number | undefined, sample_rows: request.sample_rows as number | undefined }, request.work_id as string | undefined);
           const scene = runtime.inspect();
           return textResult({ status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result: { dataset } });
         }
         if (name === "data.query") {
-          const result = await runtime.dataQuery(String(request.dataset), request.query as QuerySpec);
+          const result = await runtime.dataQuery(String(request.dataset), request.query as QuerySpec, request.work_id as string | undefined);
           const scene = runtime.inspect();
           return textResult({ status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result });
         }
         if (name === "visual.create") {
+          const workId = request.work_id as string | undefined;
           const id = String(request.id ?? `v${Object.keys(runtime.inspect().visuals).length + 1}`);
-          const visual: VisualSpec = {
-            id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined,
-            source: String(request.source), query: request.query as QuerySpec, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"],
-            layout: request.layout as VisualSpec["layout"] ?? placementLayout(runtime, request.placement as "auto" | "right" | "left" | "below" | "above")
-          };
+          if (workId) {
+            const draft: WorkingVisualDraft = { id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined, source: request.source as string | undefined, query: request.query as QuerySpec | undefined, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"] | undefined, layout: request.layout as VisualSpec["layout"] | undefined };
+            return textResult(await runtime.visualCreate(draft, request.expected_revision as number | undefined, workId));
+          }
+          const visual: VisualSpec = { id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined, source: String(request.source), query: request.query as QuerySpec, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"], layout: request.layout as VisualSpec["layout"] ?? placementLayout(runtime, request.placement as "auto" | "right" | "left" | "below" | "above") };
           return textResult(await runtime.visualCreate(visual, request.expected_revision as number | undefined));
         }
-        if (name === "visual.patch") return textResult(await runtime.visualPatch(String(request.id), request.patch as VisualPatch, request.expected_revision as number | undefined));
+        if (name === "visual.patch") return textResult(await runtime.visualPatch(String(request.id), request.patch as VisualPatch, request.expected_revision as number | undefined, request.work_id as string | undefined));
         if (name === "visual.clone") {
           const source = runtime.inspect().visuals[String(request.id)];
           const newId = String(request.new_id ?? `${request.id}-copy`);
@@ -85,14 +86,15 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
           const placedPatch = source && placement !== "auto" && !(patch?.set && "layout" in patch.set)
             ? { ...patch, set: { ...(patch?.set ?? {}), layout: placementLayout(runtime, placement, String(request.id)) } }
             : patch;
-          return textResult(await runtime.visualClone(String(request.id), newId, placedPatch, request.expected_revision as number | undefined));
+          return textResult(await runtime.visualClone(String(request.id), newId, placedPatch, request.expected_revision as number | undefined, request.work_id as string | undefined));
         }
-        if (name === "canvas.compose") return textResult(await runtime.canvasCompose(request as unknown as ComposeInput, request.expected_revision as number | undefined));
+        if (name === "canvas.compose") return textResult(await runtime.canvasCompose(request as unknown as ComposeInput, request.expected_revision as number | undefined, request.work_id as string | undefined));
         if (name === "canvas.annotate") {
           const annotation: AnnotationSpec = { id: String(request.id ?? `a${Object.keys(runtime.inspect().annotations).length + 1}`), target: request.target as string | undefined, text: String(request.text), anchor: request.anchor as AnnotationSpec["anchor"], created_at: new Date().toISOString() };
-          return textResult(await runtime.canvasAnnotate(annotation, request.expected_revision as number | undefined));
+          return textResult(await runtime.canvasAnnotate(annotation, request.expected_revision as number | undefined, request.work_id as string | undefined));
         }
         if (name === "history.apply") return textResult(await runtime.historyApply(request as unknown as HistoryApplyInput));
+        if (name === "work.apply") return textResult(await runtime.workApply({ action: request.action as "begin" | "commit" | "cancel", work_id: request.work_id as string | undefined }));
         return errorResult(runtime, new Error(`not_implemented: ${name}`));
       } catch (error) { return errorResult(runtime, error); }
     });

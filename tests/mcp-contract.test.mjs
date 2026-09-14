@@ -5,10 +5,10 @@ import { toolSchemas } from "../dist/mcp/schemas.js";
 import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
 import { resolve } from "node:path";
 
-test("exposes exactly the nine frozen MCP tool names", () => {
+test("adds only work.apply to the frozen MCP tool set", () => {
   assert.deepEqual(TOOL_NAMES, [
     "canvas.inspect", "data.inspect", "data.query", "visual.create", "visual.patch",
-    "visual.clone", "canvas.compose", "canvas.annotate", "history.apply"
+    "visual.clone", "canvas.compose", "canvas.annotate", "history.apply", "work.apply"
   ]);
 });
 
@@ -19,6 +19,11 @@ test("validates frozen tool inputs without accepting unknown properties", () => 
   const create = toolSchemas["visual.create"].parse({ source: "orders", query: {}, marks: [] });
   assert.equal(create.kind, "plot");
   assert.equal(create.placement, "auto");
+  const draft = toolSchemas["visual.create"].parse({ id: "draft", title: "Early intent", work_id: "work_1" });
+  assert.equal(draft.work_id, "work_1");
+  assert.equal(draft.title, "Early intent");
+  assert.deepEqual(toolSchemas["work.apply"].parse({ action: "begin" }), { action: "begin" });
+  assert.throws(() => toolSchemas["visual.create"].parse({ id: "not-a-draft" }), /source|query|marks/);
 });
 
 test("accepts open visual grammar fields without chart-template names", () => {

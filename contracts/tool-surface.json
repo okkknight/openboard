@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "1.0",
-  "tool_count": 9,
+  "tool_count": 10,
   "common_output": {
     "required": ["status", "canvas_id", "revision"],
-    "statuses": ["ok", "rendered", "render_limit_exceeded", "revision_conflict", "not_found", "invalid_spec", "unsupported_visual_feature", "query_rejected", "error"]
+    "statuses": ["ok", "rendered", "working", "render_limit_exceeded", "revision_conflict", "not_found", "invalid_spec", "unsupported_visual_feature", "query_rejected", "error"]
   },
   "tools": [
     {
@@ -28,7 +28,8 @@
           "dataset": { "type": "string" },
           "fields": { "type": "array", "items": { "type": "string" } },
           "top_k": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
-          "sample_rows": { "type": "integer", "minimum": 0, "maximum": 100, "default": 5 }
+          "sample_rows": { "type": "integer", "minimum": 0, "maximum": 100, "default": 5 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -42,7 +43,8 @@
         "properties": {
           "dataset": { "type": "string" },
           "query": { "$ref": "scene.schema.json#/$defs/query" },
-          "observation": { "type": "boolean", "default": true }
+          "observation": { "type": "boolean", "default": true },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -52,7 +54,6 @@
       "purpose": "Create one persistent visual object from a dataset, query, layered marks and placement.",
       "input": {
         "type": "object",
-        "required": ["source", "query", "marks"],
         "properties": {
           "id": { "type": "string" },
           "kind": { "enum": ["plot", "table", "kpi"], "default": "plot" },
@@ -63,9 +64,15 @@
           "marks": { "type": "array", "items": { "$ref": "scene.schema.json#/$defs/mark" } },
           "layout": { "$ref": "scene.schema.json#/$defs/layout" },
           "placement": { "enum": ["auto", "right", "left", "below", "above"] },
-          "expected_revision": { "type": "integer", "minimum": 0 }
+          "expected_revision": { "type": "integer", "minimum": 0 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [{
+          "if": { "required": ["work_id"] },
+          "then": { "required": ["id"] },
+          "else": { "required": ["source", "query", "marks"] }
+        }]
       }
     },
     {
@@ -86,7 +93,8 @@
             },
             "additionalProperties": false
           },
-          "expected_revision": { "type": "integer", "minimum": 0 }
+          "expected_revision": { "type": "integer", "minimum": 0 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -102,7 +110,8 @@
           "new_id": { "type": "string" },
           "patch": { "type": "object" },
           "placement": { "enum": ["auto", "right", "left", "below", "above"] },
-          "expected_revision": { "type": "integer", "minimum": 0 }
+          "expected_revision": { "type": "integer", "minimum": 0 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -119,7 +128,8 @@
           "targets": { "type": "array", "items": { "type": "string" } },
           "layout": { "$ref": "scene.schema.json#/$defs/layout" },
           "arrangement": { "enum": ["row", "column", "grid", "compact"] },
-          "expected_revision": { "type": "integer", "minimum": 0 }
+          "expected_revision": { "type": "integer", "minimum": 0 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -140,7 +150,8 @@
             "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
             "additionalProperties": false
           },
-          "expected_revision": { "type": "integer", "minimum": 0 }
+          "expected_revision": { "type": "integer", "minimum": 0 },
+          "work_id": { "type": "string", "minLength": 1 }
         },
         "additionalProperties": false
       }
@@ -158,6 +169,23 @@
           "expected_revision": { "type": "integer", "minimum": 0 }
         },
         "additionalProperties": false
+      }
+    },
+    {
+      "name": "work.apply",
+      "purpose": "Begin, atomically commit, or cancel one ephemeral live-construction work session.",
+      "input": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "enum": ["begin", "commit", "cancel"] },
+          "work_id": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false,
+        "allOf": [{
+          "if": { "properties": { "action": { "enum": ["commit", "cancel"] } }, "required": ["action"] },
+          "then": { "required": ["work_id"] }
+        }]
       }
     }
   ]
