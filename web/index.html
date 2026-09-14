@@ -354,7 +354,7 @@
           await renderEffectiveScene();
           return;
         }
-        if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; }
+        if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; await reloadScene(); return; }
         else if (event.visual_id) await render(event.visual_id);
         if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();
       });
