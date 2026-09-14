@@ -92,7 +92,15 @@
       showDetails.hidden = visible;
     };
     const cardFor = (id) => board.querySelector(`[data-visual="${CSS.escape(id)}"]`);
-    const applyLayout = (card, layout) => { card.style.left = `${layout.x}px`; card.style.top = `${layout.y}px`; card.style.width = `${layout.w}px`; card.style.height = `${layout.h}px`; };
+    const applyLayout = (card, layout, animate = false) => {
+      const before = animate && !motionReduced() ? card.getBoundingClientRect() : null;
+      card.style.left = `${layout.x}px`; card.style.top = `${layout.y}px`; card.style.width = `${layout.w}px`; card.style.height = `${layout.h}px`;
+      if (!before) return;
+      const after = card.getBoundingClientRect();
+      const dx = before.left - after.left; const dy = before.top - after.top;
+      const sx = after.width ? before.width / after.width : 1; const sy = after.height ? before.height / after.height : 1;
+      if (dx || dy || sx !== 1 || sy !== 1) card.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    };
     const markToPlot = (mark, data) => {
       const factory = Plot[mark.type];
       if (typeof factory !== 'function') throw new Error(`unsupported mark ${mark.type}`);
@@ -313,11 +321,11 @@
       empty.hidden = board.querySelectorAll('.visual-card').length > 0;
     }
 
-    function updateScene(next) {
+    function updateScene(next, animateLayout = false) {
       scene = next; revision.textContent = `Revision ${durableScene.revision}`;
       canvasMeta.textContent = `${Object.keys(scene.visuals).length} visual${Object.keys(scene.visuals).length === 1 ? '' : 's'} · ${Object.keys(scene.datasets).length} dataset${Object.keys(scene.datasets).length === 1 ? '' : 's'}`;
       annotations.replaceChildren(...Object.values(scene.annotations).map((annotation) => { const item = document.createElement('div'); item.className = 'annotation'; item.innerHTML = '<strong>Note</strong>'; item.append(document.createTextNode(annotation.text)); return item; }));
-      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual)); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
+      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual), animateLayout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
     }
 
     async function renderEffectiveScene() {
@@ -376,7 +384,12 @@
         }
         if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; await reloadScene(); return; }
         else if (event.visual_id) await render(event.visual_id);
-        if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();
+        if (event.type === 'layout.changed') {
+          durableScene = await fetch('/api/scene').then((response) => response.json());
+          updateScene(mergeEffectiveScene(), true);
+          return;
+        }
+        if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed') await reloadScene();
       });
     }
     await reloadScene();

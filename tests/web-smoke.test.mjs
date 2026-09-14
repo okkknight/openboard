@@ -94,6 +94,17 @@ test("reloads durable scene after a visual removal event", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("handles layout changes without re-rendering visual data", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "layout-isolation", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /event\.type === 'layout\.changed'[\s\S]*?updateScene\(mergeEffectiveScene\(\), true\)/);
+    assert.match(html, /applyLayout\(card, visualLayout\(visual\), animateLayout\)/);
+    assert.doesNotMatch(html, /event\.type === 'layout\.changed'\) await reloadScene\(\)/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("broadcasts a visual mutation revision over WebSocket", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "socket", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 1, h: 1 } });
