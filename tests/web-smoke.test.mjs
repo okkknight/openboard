@@ -143,6 +143,22 @@ test("serves a local Plot bundle and a rendered visual payload", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("returns a clean error for a failed visual render without crashing the server", async () => {
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "render-error", revision: 0,
+    datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } },
+    visuals: { bad: { id: "bad", kind: "plot", source: "orders", query: {}, marks: [{ id: "bars", type: "barY", options: { tip: true } }], layout: { x: 0, y: 0, w: 300, h: 200 } } },
+    annotations: {}, canvas: {}
+  });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/visual/bad`);
+    assert.equal(response.status, 404);
+    const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`);
+    assert.equal(scene.status, 200);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves the primitive SVG renderer alongside Plot", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "primitive-web", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await runtime.visualCreate({ id: "pie", kind: "plot", source: "orders", coordinate: { type: "polar" }, query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "slices", renderer: "primitive", type: "arc", encoding: { angle: { field: "orders" }, color: { field: "channel" } } }], layout: { x: 0, y: 0, w: 300, h: 200 } });

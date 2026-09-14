@@ -27,9 +27,10 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
     if (url.pathname.startsWith("/api/visual/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/visual/".length));
       try {
+        const payload = await runtime.renderVisual(id, url.searchParams.get("work_id") ?? undefined);
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(await runtime.renderVisual(id, url.searchParams.get("work_id") ?? undefined)));
-      } catch { response.writeHead(404).end(); }
+        response.end(JSON.stringify(payload));
+      } catch { if (!response.headersSent) response.writeHead(404).end(); else response.destroy(); }
       return;
     }
     if (request.url === "/assets/plot.js") {
