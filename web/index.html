@@ -282,17 +282,40 @@
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
     toggleDetails.addEventListener('click', () => setDetailsVisible(false));
     showDetails.addEventListener('click', () => setDetailsVisible(true));
+    let socket = null;
+    let reconnectTimer = null;
+    let reconnectDelay = 250;
+    const socketUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    const scheduleSocketReconnect = () => {
+      if (reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connectSocket(); }, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+    };
+    function connectSocket() {
+      if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) return;
+      setConnection('Connecting…', false);
+      const nextSocket = new WebSocket(socketUrl());
+      socket = nextSocket;
+      nextSocket.addEventListener('open', async () => {
+        reconnectDelay = 250;
+        setConnection('Connected', true);
+        try { await reloadScene(); } catch { scheduleSocketReconnect(); }
+      });
+      nextSocket.addEventListener('close', () => {
+        if (socket !== nextSocket) return;
+        setConnection('Disconnected', false);
+        scheduleSocketReconnect();
+      });
+      nextSocket.addEventListener('error', () => { if (socket === nextSocket) setConnection('Connection error', false); });
+      nextSocket.addEventListener('message', async ({ data }) => {
+        const event = JSON.parse(data);
+        if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; }
+        else if (event.visual_id) await render(event.visual_id);
+        if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();
+      });
+    }
     await reloadScene();
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-    socket.addEventListener('open', () => setConnection('Connected', true));
-    socket.addEventListener('close', () => setConnection('Disconnected', false));
-    socket.addEventListener('error', () => setConnection('Connection error', false));
-    socket.addEventListener('message', async ({ data }) => {
-      const event = JSON.parse(data);
-      if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; }
-      else if (event.visual_id) await render(event.visual_id);
-      if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed' || event.type === 'layout.changed') await reloadScene();
-    });
+    connectSocket();
   </script>
 </body>
 </html>
