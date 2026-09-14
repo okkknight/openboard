@@ -71,6 +71,7 @@
     const showDetails = document.querySelector('#show-details');
     let scene = null;
     let zoom = 1;
+    const renderedVisualSignatures = new Map();
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
     const setDetailsVisible = (visible) => {
@@ -92,7 +93,81 @@
     const primitivePalette = plotPalette;
     const primitiveColor = (value, index) => typeof value === 'string' && /^(#|rgb\(|hsl\(|transparent$|currentColor$)/i.test(value) ? value : primitivePalette[index % primitivePalette.length];
     const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-    function renderPrimitiveLayer(layer, width, height, svg) {
+    const motionReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const easeOut = (progress) => 1 - Math.pow(1 - progress, 3);
+    const visualSignature = (visual) => JSON.stringify({ kind: visual.kind, source: visual.source, query: visual.query, coordinate: visual.coordinate, marks: visual.marks });
+    const shouldAnimateVisual = (visual) => {
+      const signature = visualSignature(visual);
+      const changed = renderedVisualSignatures.get(visual.id) !== signature;
+      renderedVisualSignatures.set(visual.id, signature);
+      return changed && !motionReduced();
+    };
+    function animateElement(element, kind, keyframes, options) {
+      element.dataset.entranceAnimation = kind;
+      requestAnimationFrame(() => {
+        const animation = element.animate(keyframes, { duration: 460, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both', ...options });
+        animation.onfinish = () => { element.style.transform = ''; element.style.opacity = ''; element.style.strokeDasharray = ''; element.style.strokeDashoffset = ''; };
+      });
+    }
+    function animateArc(path, arc, row, index) {
+      const startAngle = numeric(row.startAngle);
+      const endAngle = numeric(row.endAngle);
+      const delay = index * 80;
+      const duration = 520;
+      path.dataset.entranceAnimation = 'arc';
+      path.setAttribute('d', arc({ ...row, endAngle: startAngle }) || '');
+      const startedAt = performance.now() + delay;
+      const frame = (now) => {
+        if (now < startedAt) return requestAnimationFrame(frame);
+        const progress = Math.min(1, (now - startedAt) / duration);
+        path.setAttribute('d', arc({ ...row, endAngle: startAngle + (endAngle - startAngle) * easeOut(progress) }) || '');
+        if (progress < 1) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+    function animatePrimitiveMark(element, type, index = 0) {
+      if (type === 'text') {
+        animateElement(element, 'text', [{ transform: 'translateY(6px)', opacity: 0 }, { transform: 'translateY(0)', opacity: 1 }], { duration: 220, delay: index * 45 });
+        return;
+      }
+      if (type === 'rect' || type === 'area') {
+        element.style.transformBox = 'fill-box'; element.style.transformOrigin = 'center bottom';
+        animateElement(element, type, [{ transform: 'scaleY(0)', opacity: 0.2 }, { transform: 'scaleY(1)', opacity: 1 }], { delay: index * 55 });
+        return;
+      }
+      if (type === 'circle') {
+        element.style.transformBox = 'fill-box'; element.style.transformOrigin = 'center';
+        animateElement(element, 'circle', [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 260, delay: index * 55 });
+        return;
+      }
+      const length = element.getTotalLength?.();
+      if (length) {
+        element.style.strokeDasharray = `${length} ${length}`; element.style.strokeDashoffset = String(length);
+        animateElement(element, type, [{ strokeDashoffset: String(length), opacity: 0.25 }, { strokeDashoffset: '0', opacity: 1 }], { duration: 520, delay: index * 55 });
+      } else animateElement(element, type, [{ opacity: 0 }, { opacity: 1 }], { delay: index * 55 });
+    }
+    function animatePlotMarks(svg) {
+      svg.querySelectorAll('g[aria-label="bar"] rect').forEach((rect, index) => {
+        rect.style.transformBox = 'fill-box'; rect.style.transformOrigin = 'center bottom';
+        animateElement(rect, 'bar', [{ transform: 'scaleY(0)', opacity: 0.2 }, { transform: 'scaleY(1)', opacity: 1 }], { delay: index * 65 });
+      });
+      svg.querySelectorAll('g[aria-label="line"] path').forEach((path) => {
+        const length = path.getTotalLength?.();
+        if (!length) return;
+        path.style.strokeDasharray = `${length} ${length}`; path.style.strokeDashoffset = String(length);
+        animateElement(path, 'line', [{ strokeDashoffset: String(length), opacity: 0.35 }, { strokeDashoffset: '0', opacity: 1 }], { duration: 620 });
+      });
+      svg.querySelectorAll('g[aria-label="dot"] circle').forEach((dot, index) => {
+        dot.style.transformBox = 'fill-box'; dot.style.transformOrigin = 'center';
+        animateElement(dot, 'dot', [{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 260, delay: 280 + index * 70 });
+      });
+      svg.querySelectorAll('g[aria-label]').forEach((group) => {
+        const type = group.getAttribute('aria-label');
+        if (!['area', 'rect', 'cell', 'rule', 'text', 'tick', 'box'].includes(type)) return;
+        group.querySelectorAll('path, rect, circle, line, text').forEach((element, index) => animatePrimitiveMark(element, type === 'text' ? 'text' : type === 'area' ? 'area' : type === 'rect' || type === 'cell' || type === 'box' ? 'rect' : type, index));
+      });
+    }
+    function renderPrimitiveLayer(layer, width, height, svg, animate) {
       const group = svgElement('g'); group.setAttribute('data-primitive', layer.id);
       const values = layer.values || []; const options = layer.options || {};
       if (layer.type === 'arc') {
@@ -105,6 +180,7 @@
           path.setAttribute('fill', primitiveColor(row.fill ?? row.color ?? options.fill, index));
           path.setAttribute('stroke', String(row.stroke ?? options.stroke ?? '#0d1117'));
           path.setAttribute('stroke-width', String(options.strokeWidth ?? 1)); group.append(path);
+          if (animate) animateArc(path, arc, row, index);
           if (row.label !== undefined && row.label !== null && String(row.label).trim()) {
             const label = svgElement('text');
             const midpointRadius = ((numeric(row.innerRadius) + numeric(row.outerRadius, 1)) / 2) * radius;
@@ -121,27 +197,31 @@
             const percent = Number(row.percent);
             label.textContent = Number.isFinite(percent) ? `${String(row.label)} ${Math.round(percent * 100)}%` : String(row.label);
             group.append(label);
+            if (animate) animateElement(label, 'arc-label', [{ opacity: 0 }, { opacity: 1 }], { duration: 220, delay: 220 + index * 80 });
           }
         });
       } else if (layer.type === 'circle') {
         values.forEach((row, index) => {
           const circle = svgElement('circle'); circle.setAttribute('cx', String(numeric(row._x))); circle.setAttribute('cy', String(numeric(row._y))); circle.setAttribute('r', String(Math.max(0, numeric(row._radius ?? row._size, 4))));
           circle.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); if (row._stroke ?? options.stroke) circle.setAttribute('stroke', String(row._stroke ?? options.stroke)); group.append(circle);
+          if (animate) animatePrimitiveMark(circle, 'circle', index);
         });
       } else if (layer.type === 'line') {
         values.forEach((row, index) => {
           const line = svgElement('line'); line.setAttribute('x1', String(numeric(row._x1 ?? row._x))); line.setAttribute('y1', String(numeric(row._y1 ?? row._y))); line.setAttribute('x2', String(numeric(row._x2 ?? row._x))); line.setAttribute('y2', String(numeric(row._y2 ?? row._y))); line.setAttribute('stroke', String(row._stroke ?? options.stroke ?? primitiveColor(row._color, index))); line.setAttribute('stroke-width', String(options.strokeWidth ?? 2)); group.append(line);
+          if (animate) animatePrimitiveMark(line, 'line', index);
         });
       } else if (layer.type === 'rect') {
         values.forEach((row, index) => {
           const rect = svgElement('rect'); const x = numeric(row._x); const y = numeric(row._y); const x2 = numeric(row._x2, x + numeric(row._width, 10)); const y2 = numeric(row._y2, y + numeric(row._height, 10)); rect.setAttribute('x', String(Math.min(x, x2))); rect.setAttribute('y', String(Math.min(y, y2))); rect.setAttribute('width', String(Math.abs(x2 - x))); rect.setAttribute('height', String(Math.abs(y2 - y))); rect.setAttribute('fill', primitiveColor(row._fill ?? row._color ?? options.fill, index)); group.append(rect);
+          if (animate) animatePrimitiveMark(rect, 'rect', index);
         });
       } else if (layer.type === 'path') {
-        const path = svgElement('path'); path.setAttribute('d', String(options.d)); if (options.fill !== undefined) path.setAttribute('fill', String(options.fill)); if (options.stroke !== undefined) path.setAttribute('stroke', String(options.stroke)); group.append(path);
+        const path = svgElement('path'); path.setAttribute('d', String(options.d)); if (options.fill !== undefined) path.setAttribute('fill', String(options.fill)); if (options.stroke !== undefined) path.setAttribute('stroke', String(options.stroke)); group.append(path); if (animate) animatePrimitiveMark(path, 'path');
       } else if (layer.type === 'text') {
-        values.forEach((row) => { const text = svgElement('text'); text.setAttribute('x', String(numeric(row._x))); text.setAttribute('y', String(numeric(row._y))); text.setAttribute('fill', String(row._fill ?? options.fill ?? '#edf3fb')); text.textContent = String(row._text ?? ''); group.append(text); });
+        values.forEach((row, index) => { const text = svgElement('text'); text.setAttribute('x', String(numeric(row._x))); text.setAttribute('y', String(numeric(row._y))); text.setAttribute('fill', String(row._fill ?? options.fill ?? '#edf3fb')); text.textContent = String(row._text ?? ''); group.append(text); if (animate) animatePrimitiveMark(text, 'text', index); });
       } else if (layer.type === 'area') {
-        const points = values.map((row) => [numeric(row._x), numeric(row._y)]); if (points.length) { const path = svgElement('path'); path.setAttribute('d', `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`); path.setAttribute('fill', String(options.fill ?? '#6bd8c4')); path.setAttribute('fill-opacity', String(options.fillOpacity ?? 0.35)); group.append(path); }
+        const points = values.map((row) => [numeric(row._x), numeric(row._y)]); if (points.length) { const path = svgElement('path'); path.setAttribute('d', `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`); path.setAttribute('fill', String(options.fill ?? '#6bd8c4')); path.setAttribute('fill-opacity', String(options.fillOpacity ?? 0.35)); group.append(path); if (animate) animatePrimitiveMark(path, 'area'); }
       }
       svg.append(group);
     }
@@ -151,6 +231,7 @@
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
       const payload = await response.json();
       const visual = payload.result.visual;
+      const animate = shouldAnimateVisual(visual);
       if (scene && Number.isInteger(payload.revision) && payload.revision >= scene.revision) { scene.revision = payload.revision; revision.textContent = `Revision ${scene.revision}`; }
       let card = cardFor(id);
       if (!card) {
@@ -175,8 +256,9 @@
         } else {
           const width = Math.max(220, visual.layout.w - 16); const height = Math.max(120, visual.layout.h - 48);
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
-          for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg);
+          for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, animate);
           plot.replaceChildren(svg);
+          if (animate) animatePlotMarks(svg);
         }
       } catch (error) { plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
