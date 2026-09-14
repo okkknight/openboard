@@ -175,7 +175,7 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
   const nextMarks = next.querySelector(':scope > [data-zone="marks"]');
   const descriptors = identityByMark(artifact);
   const currentLayers = [...currentMarks.children]
-    .map((layer) => layerModel(layer, descriptors.get(layer.dataset.markId) ?? {
+    .map((layer) => layerModel(layer, {
       mark_id: layer.dataset.markId,
       mark_type: layer.dataset.markType,
       identity_mode: layer.dataset.identityMode

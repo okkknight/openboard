@@ -85,12 +85,12 @@ test("serves websocket reconnect logic that reloads the scene", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
-test("reloads durable scene after a visual removal event", async () => {
+test("refreshes durable metadata after a visual removal event", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "remove-refresh", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
   try {
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
-    assert.match(html, /if \(event\.type === 'visual\.removed'[\s\S]*?await reloadScene\(\); return;/);
+    assert.match(html, /if \(event\.type === 'visual\.removed'[\s\S]*?durableScene = await fetch\('\/api\/scene'\)[\s\S]*?return;/);
   } finally { await server.close(); runtime.close(); }
 });
 
@@ -102,6 +102,18 @@ test("handles layout changes without re-rendering visual data", async () => {
     assert.match(html, /event\.type === 'layout\.changed'[\s\S]*?updateScene\(mergeEffectiveScene\(\), true\)/);
     assert.match(html, /applyLayout\(card, visualLayout\(visual\), animateLayout\)/);
     assert.doesNotMatch(html, /event\.type === 'layout\.changed'\) await reloadScene\(\)/);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("uses retained card birth and exit paths instead of reloading every visual", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "spatial-life", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /function animateCardBirth/);
+    assert.match(html, /function removeCard/);
+    assert.match(html, /event\.type === 'visual\.removed'[\s\S]*?removeCard/);
+    assert.match(html, /event\.type === 'visual\.removed'[\s\S]*?removeCard[\s\S]*?updateScene\(mergeEffectiveScene\(\)\)[\s\S]*?return;/);
   } finally { await server.close(); runtime.close(); }
 });
 

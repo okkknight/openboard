@@ -164,6 +164,19 @@ test("returns a work render artifact without issuing a second DuckDB query", asy
   runtime.close();
 });
 
+test("moving a rendered card does not issue another DuckDB query", async () => {
+  const engine = new CountingQueryEngine();
+  const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
+  await runtime.visualCreate(fullVisual());
+  const before = engine.queries;
+
+  await runtime.canvasCompose({ action: "move", target: "channel-orders", layout: { x: 120, y: 48, w: 520, h: 340 } });
+
+  assert.equal(engine.queries, before);
+  assert.deepEqual(runtime.inspect().visuals["channel-orders"].layout, { x: 120, y: 48, w: 520, h: 340 });
+  runtime.close();
+});
+
 test("shares an in-flight work artifact with a browser render request", async () => {
   const gate = deferred();
   const engine = new SlowQueryEngine(gate);

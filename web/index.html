@@ -102,6 +102,17 @@
       const sx = after.width ? before.width / after.width : 1; const sy = after.height ? before.height / after.height : 1;
       if (dx || dy || sx !== 1 || sy !== 1) card.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
     };
+    function animateCardBirth(card, parent) {
+      if (motionReduced()) return;
+      const origin = parent?.getBoundingClientRect(); const target = card.getBoundingClientRect();
+      const dx = origin ? origin.left - target.left : 0; const dy = origin ? origin.top - target.top : 10;
+      card.animate([{ opacity: 0, transform: `translate(${dx}px, ${dy}px) scale(.96)` }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+    async function removeCard(card) {
+      if (!card) return;
+      if (!motionReduced()) await card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-8px) scale(.98)' }], { duration: 160, easing: 'ease-in', fill: 'both' }).finished.catch(() => {});
+      card.remove();
+    }
     const markToPlot = (mark, data) => {
       const factory = Plot[mark.type];
       if (typeof factory !== 'function') throw new Error(`unsupported mark ${mark.type}`);
@@ -286,6 +297,7 @@
         const title = document.createElement('span'); title.className = 'visual-title';
         const visualId = document.createElement('span'); visualId.className = 'visual-id'; visualId.textContent = id;
         head.append(title, visualId); card.append(head, Object.assign(document.createElement('div'), { className: 'plot' })); board.append(card);
+        animateCardBirth(card, visual.derived_from ? cardFor(visual.derived_from) : undefined);
       }
       card.querySelector('.visual-title').textContent = visual.title || id;
       applyLayout(card, visualLayout(visual));
@@ -387,7 +399,13 @@
           await renderEffectiveScene();
           return;
         }
-        if (event.type === 'visual.removed' && event.visual_id) { cardFor(event.visual_id)?.remove(); empty.hidden = board.querySelectorAll('.visual-card').length > 0; await reloadScene(); return; }
+        if (event.type === 'visual.removed' && event.visual_id) {
+          await removeCard(cardFor(event.visual_id));
+          durableScene = await fetch('/api/scene').then((response) => response.json());
+          updateScene(mergeEffectiveScene());
+          empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+          return;
+        }
         else if (event.visual_id) await render(event.visual_id);
         if (event.type === 'layout.changed') {
           durableScene = await fetch('/api/scene').then((response) => response.json());
