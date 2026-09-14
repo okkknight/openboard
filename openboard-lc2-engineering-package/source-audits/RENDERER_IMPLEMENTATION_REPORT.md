@@ -285,6 +285,6 @@ Readiness: **ready for a design/implementation spike at the RenderArtifact bound
 8. Observable Plot mark base/options: [`node_modules/@observablehq/plot/src/mark.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/mark.js:10-133)
 9. Plot style/ARIA application: [`node_modules/@observablehq/plot/src/style.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/style.js:154-230)
 10. Plot bar/line/area/dot implementations: [`bar.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/marks/bar.js:21-56), [`line.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/marks/line.js:52-78), [`area.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/marks/area.js:46-70), [`dot.js`](/Users/linpeiwen/knightspace/openboard/node_modules/@observablehq/plot/src/marks/dot.js:73-137)
-11. ASCII retention map: [`RENDERER_DOM_MAP.txt`](/Users/linpeiwen/knightspace/openboard/RENDERER_DOM_MAP.txt)
+11. ASCII retention map: [`RENDERER_DOM_MAP.txt`](RENDERER_DOM_MAP.txt)
 
 是否修改任何生产代码：**NO**。本审计仅新增本报告与 DOM map 两份文档。

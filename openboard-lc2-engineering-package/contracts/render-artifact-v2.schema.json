@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openboard.local/contracts/render-artifact-v2.schema.json",
+  "title": "RenderArtifactV2 Identity Extension",
+  "type": "object",
+  "required": [
+    "artifact_version",
+    "visual_id",
+    "generation",
+    "identity"
+  ],
+  "properties": {
+    "artifact_version": {
+      "const": 2
+    },
+    "visual_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "work_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "visual_key",
+        "marks"
+      ],
+      "properties": {
+        "visual_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "mark_id",
+              "renderer",
+              "mark_type",
+              "identity_mode",
+              "key_fields",
+              "layer_key"
+            ],
+            "properties": {
+              "mark_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "renderer": {
+                "enum": [
+                  "plot",
+                  "primitive"
+                ]
+              },
+              "mark_type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "identity_mode": {
+                "enum": [
+                  "datum",
+                  "series",
+                  "singleton",
+                  "nonretainable"
+                ]
+              },
+              "key_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "series_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "layer_key": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

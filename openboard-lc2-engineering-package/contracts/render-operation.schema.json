@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openboard.local/contracts/render-operation.schema.json",
+  "title": "RenderOperation",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "mark_id",
+        "key"
+      ],
+      "properties": {
+        "type": {
+          "const": "enter"
+        },
+        "mark_id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "mark_id",
+        "key"
+      ],
+      "properties": {
+        "type": {
+          "const": "update"
+        },
+        "mark_id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "mark_id",
+        "key"
+      ],
+      "properties": {
+        "type": {
+          "const": "exit"
+        },
+        "mark_id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "mark_id"
+      ],
+      "properties": {
+        "type": {
+          "const": "replace-layer"
+        },
+        "mark_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "replace-axes"
+        }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

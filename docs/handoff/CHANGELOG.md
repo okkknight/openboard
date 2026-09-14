@@ -8,3 +8,8 @@
 - Renderer-specific audit 已完成并提交为 `35d71f1`：`RENDERER_IMPLEMENTATION_REPORT.md` 与 `RENDERER_DOM_MAP.txt`。结论是卡片保留、图内 SVG 重建；后续 LC2-A 推荐 B — RenderArtifact diff。
 - 交接包创建完成：根目录 `PROJECT_CONTEXT.md`、本目录 `README.md` 与本文件。
 - 最新核验：`npm run verify:core` 通过 86/86；本地服务 `127.0.0.1:3000` 的根页面和 `/api/scene` 返回 HTTP 200；当前 Scene revision 为 24。
+
+## 2026-09-14 — LC2 package audit relocation
+
+- 四份审计材料已归档到 `openboard-lc2-engineering-package/source-audits/`；根目录交接链接改为指向该位置。
+- 其中 `CURRENT_IMPLEMENTATION_*` 明确标记为 LC0+LC1 前的历史快照；后续实现必须以当前源码、测试和 `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md` 判断现状。

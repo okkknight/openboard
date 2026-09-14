@@ -66,13 +66,13 @@ lsof -nP -iTCP:3000 -sTCP:LISTEN
 - `src/web/server.ts`：HTTP `/api/scene`、`/api/visual/:id`、`/ws`。
 - `contracts/`：scene/tool/event/output 合同。
 - `.datacanvas/`：本地 scene、JSONL history、snapshots、checkpoint/fork metadata；不要把 DOM/HTML 写进去。
-- `RENDERER_IMPLEMENTATION_REPORT.md`、`RENDERER_DOM_MAP.txt`：2026-09-14 Renderer-specific audit（当前最新专题资料）。
+- `openboard-lc2-engineering-package/source-audits/RENDERER_IMPLEMENTATION_REPORT.md`、`openboard-lc2-engineering-package/source-audits/RENDERER_DOM_MAP.txt`：2026-09-14 Renderer-specific audit（当前最新专题资料）。
 - `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md`：LC0+LC1 实现和测试证据。
 - `docs/superpowers/specs/2026-09-09-data-canvas-v1-design.md`、`docs/superpowers/plans/2026-09-14-live-construction-lc0-lc1.md`：设计/计划依据。
 
 ## 历史文档的注意事项
 
-`CURRENT_IMPLEMENTATION_MAP.txt` 和 `CURRENT_IMPLEMENTATION_REPORT.md` 是 LC0+LC1 之前生成的架构快照，仍可作为历史对照，但其中“visual mutation 先完整 render、没有 work”不代表当前源码。判断当前行为应以 `src/`、`web/`、测试和 `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md` 为准。
+`openboard-lc2-engineering-package/source-audits/CURRENT_IMPLEMENTATION_MAP.txt` 和 `openboard-lc2-engineering-package/source-audits/CURRENT_IMPLEMENTATION_REPORT.md` 是 LC0+LC1 之前生成的架构快照，仍可作为历史对照，但其中“visual mutation 先完整 render、没有 work”不代表当前源码。判断当前行为应以 `src/`、`web/`、测试和 `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md` 为准。
 
 ## 运行时注意事项
 

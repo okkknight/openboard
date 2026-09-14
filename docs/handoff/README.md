@@ -6,7 +6,7 @@
 
 1. [`PROJECT_CONTEXT.md`](../../PROJECT_CONTEXT.md)：当前唯一的项目上下文与工作规则。
 2. [`AGENTS.md`](../../AGENTS.md)：实现边界和不可违背的架构规则。
-3. [`RENDERER_IMPLEMENTATION_REPORT.md`](../../RENDERER_IMPLEMENTATION_REPORT.md)：最新 Renderer-specific audit，包含 LC2-A 建议。
+3. [`RENDERER_IMPLEMENTATION_REPORT.md`](../../openboard-lc2-engineering-package/source-audits/RENDERER_IMPLEMENTATION_REPORT.md)：最新 Renderer-specific audit，包含 LC2-A 建议。
 4. [`LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md`](../../LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md)：LC0+LC1 实现、事件和测试证据。
 5. [`CHANGELOG.md`](CHANGELOG.md)：只记录有长期价值的交接变更。
 
