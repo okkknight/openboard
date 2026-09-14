@@ -1,0 +1,67 @@
+Data Canvas — current implementation map (audited 2026-09-14)
+
+User request
+  |
+  |  (Codex decision time is outside OpenBoard; no request/task state)
+  v
+Codex -> MCP stdio
+  src/mcp/server.ts + src/mcp/schemas.ts
+  |
+  +-- canvas.inspect ------> SceneStore.inspect --------------------------> MCP JSON only
+  +-- data.inspect --------> DuckDbEngine.inspect ------------------------> MCP JSON only
+  +-- data.query ----------> inspect -> compileQuery -> DuckDB -> observe -> MCP JSON only
+  |
+  +-- visual.create / visual.patch / visual.clone
+       |
+       |  CURRENT ORDER (synchronous; no draft/progress event)
+       v
+       DataCanvasRuntime.#render(preview/full VisualSpec)
+         -> DuckDbEngine.inspect (full profile)
+         -> compileQuery
+         -> DuckDbEngine.query/queryRaw
+         -> getRowObjectsJS (all rows)
+         -> assertRenderable
+         -> observe
+         -> compilePlot / compilePrimitive
+       |
+       v
+       SceneStore.#commit
+         -> clone Scene -> mutate -> revision +1 -> HistoryStore snapshot/record
+       |
+       v
+       Persistence
+         -> .datacanvas/scene.json
+         -> .datacanvas/snapshots/<revision>.json
+         -> history.jsonl + metadata.json
+       |
+       v
+       EventBus.emit({type, canvas_id, revision, visual_id?})
+       |
+       v
+HTTP/WebSocket server (127.0.0.1:3000)
+  src/web/server.ts
+  |
+  +-- GET /api/scene ------------------------------> durable Scene JSON
+  +-- GET /api/visual/:id -> runtime.renderVisual -> FULL query/render again
+  +-- /ws ------------------------------> notification event only (no rows/diff/phase)
+  |
+  v
+Browser: web/index.html (vanilla JS)
+  |
+  +-- visual event: fetch /api/visual/:id
+  |     -> Observable Plot.plot creates NEW SVG
+  |     -> primitive layers append NEW SVG nodes
+  |     -> plot.replaceChildren(svg)
+  |     -> final-state entrance animation
+  |
+  +-- history / annotation / focus / layout event: reloadScene
+        -> GET Scene + render EVERY visual
+
+State boundaries
+  durable: Scene + history records + Scene snapshots + checkpoint/fork metadata
+  ephemeral: DuckDB view/results, PlotConfig, HTTP responses, WebSocket events, SVG/DOM, animations
+  absent: draft, pending, loading, work/task/request, progress, transaction, chunk/stream, retained mark diff
+
+Important mismatch with V1 spec
+  Spec: validate -> mutate Scene -> append history -> schedule render -> event
+  Actual: validate -> FULL render -> mutate Scene -> persist -> event
