@@ -198,6 +198,19 @@ export class SceneStore {
     return { revision: scene.revision, visual: clone(scene.visuals[visual.id]) };
   }
 
+  /** Applies a fully validated ephemeral work result through one durable revision. */
+  commitWork(materialized: Scene, input: JsonValue, expectedRevision?: number): SceneMutationResult {
+    if (materialized.canvas_id !== this.#scene.canvas_id) throw new Error("work_canvas_mismatch");
+    const normalized = normalizeScene(clone(materialized));
+    const scene = this.#commit({ operation: "work.commit", input }, (draft) => {
+      draft.datasets = clone(normalized.datasets);
+      draft.visuals = clone(normalized.visuals);
+      draft.annotations = clone(normalized.annotations);
+      draft.canvas = clone(normalized.canvas);
+    }, expectedRevision);
+    return { revision: scene.revision };
+  }
+
   compose(input: ComposeInput, expectedRevision?: number): SceneMutationResult {
     const scene = this.#commit({ operation: "canvas.compose", target: input.target, input: input as unknown as JsonValue }, (draft) => {
       if (input.action === "focus") {

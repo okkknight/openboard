@@ -120,6 +120,22 @@ test("create, compose, and annotate each commit one scene revision", () => {
   assert.equal(store.inspect().annotations.a1.text, "Investigate this");
 });
 
+test("commits a materialized work overlay as one durable revision and history record", () => {
+  const store = new SceneStore({ ...seed(), revision: 20 });
+  const effective = store.inspect();
+  effective.visuals.v1.title = "Work result";
+  effective.visuals.v2 = { ...effective.visuals.v1, id: "v2", title: "Comparison", layout: { x: 500, y: 0, w: 480, h: 320 } };
+  effective.annotations.note = { id: "note", target: "v2", text: "Real work result", created_at: "2026-09-14T00:00:00.000Z" };
+
+  const committed = store.commitWork(effective, { operation_count: 4 }, 20);
+
+  assert.equal(committed.revision, 21);
+  assert.equal(store.inspect().visuals.v1.title, "Work result");
+  assert.equal(store.inspect().visuals.v2.title, "Comparison");
+  assert.equal(store.inspect().annotations.note.text, "Real work result");
+  assert.deepEqual(store.historyRecords().map((record) => [record.revision, record.operation]), [[21, "work.commit"]]);
+});
+
 test("history apply returns an earlier immutable scene snapshot", () => {
   const store = new SceneStore(seed());
   store.patchVisual("v1", { set: { title: "One" } });

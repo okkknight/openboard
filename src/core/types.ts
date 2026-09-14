@@ -172,6 +172,57 @@ export interface Scene {
   canvas: CanvasState;
 }
 
+export type WorkStatus = "active" | "committing" | "completed" | "cancelled" | "failed";
+
+/** A partial visual exists only inside a non-persistent WorkSession. */
+export interface WorkingVisualDraft {
+  id: string;
+  kind?: VisualSpec["kind"];
+  title?: string;
+  source?: string;
+  query?: QuerySpec;
+  coordinate?: CoordinateSpec;
+  marks?: MarkSpec[];
+  layout?: LayoutSpec;
+  derived_from?: string;
+  facet?: JsonObject;
+  phase?: "draft" | "ready" | "error";
+  error?: string;
+}
+
+export type WorkingVisual = VisualSpec | WorkingVisualDraft;
+
+export interface WorkingOverlay {
+  visuals: Record<string, WorkingVisualDraft>;
+  removed_visual_ids: string[];
+  annotations: Record<string, AnnotationSpec>;
+  removed_annotation_ids: string[];
+  canvas?: CanvasState;
+  operations: number;
+}
+
+export interface WorkActivity {
+  kind: "inspect" | "query" | "render";
+  status: "started" | "completed" | "failed";
+  label: string;
+  visual_id?: string;
+  error?: string;
+}
+
+export interface WorkSession {
+  id: string;
+  base_revision: number;
+  status: WorkStatus;
+  sequence: number;
+  started_at: string;
+  overlay: WorkingOverlay;
+  activity?: WorkActivity;
+}
+
+export interface EffectiveScene extends Omit<Scene, "visuals"> {
+  visuals: Record<string, WorkingVisual>;
+}
+
 export interface VisualPatch {
   set?: Record<string, JsonValue>;
   unset?: string[];
