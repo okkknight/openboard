@@ -1,5 +1,6 @@
-import type { JsonObject, JsonValue, MarkSpec, VisualSpec } from "../core/types.js";
+import type { JsonObject, JsonValue, MarkIdentityDescriptor, MarkSpec, RenderIdentityContract, VisualSpec } from "../core/types.js";
 import { compilePrimitive, type PrimitiveLayer } from "./primitive-compiler.js";
+import { describeMarkIdentity, renderIdentity, renderKeys } from "./render-identity.js";
 import { isPlotMark, resolveRenderer, SUPPORTED_MARKS, SUPPORTED_PRIMITIVES } from "./renderer-registry.js";
 
 export { SUPPORTED_MARKS, SUPPORTED_PRIMITIVES };
@@ -8,6 +9,8 @@ export interface CompiledMark {
   id: string;
   type: MarkSpec["type"];
   options: JsonObject;
+  identity: MarkIdentityDescriptor;
+  render_keys: string[];
 }
 
 export type CompiledLayer =
@@ -17,6 +20,7 @@ export type CompiledLayer =
 export interface PlotConfig {
   data: JsonObject[];
   marks: CompiledMark[];
+  identity?: RenderIdentityContract;
   primitives?: PrimitiveLayer[];
   layers?: CompiledLayer[];
 }
@@ -85,23 +89,26 @@ export function compilePlot(visual: VisualSpec, rows: JsonObject[]): PlotConfig 
   const result: PlotConfig = {
     data: structuredClone(rows),
     marks: [],
+    identity: renderIdentity(visual, []),
   };
   const primitives: PrimitiveLayer[] = [];
   const layers: CompiledLayer[] = [];
   for (const mark of visual.marks) {
     if (resolveRenderer(mark) === "plot") {
       if (!isPlotMark(mark.type)) throw new Error(`unsupported_visual_feature: plot mark ${mark.type}`);
-      const compiled = { id: mark.id, type: mark.type, options: asOptions(mark) };
+      const identity = describeMarkIdentity(visual, mark, "plot", rows);
+      const compiled = { id: mark.id, type: mark.type, options: asOptions(mark), identity, render_keys: renderKeys(identity, rows) };
       result.marks.push(compiled);
       layers.push({ renderer: "plot", mark: compiled });
     } else {
       if (!SUPPORTED_PRIMITIVES.includes(mark.type as typeof SUPPORTED_PRIMITIVES[number])) throw new Error(`unsupported_visual_feature: primitive mark ${mark.type}`);
-      const primitive = compilePrimitive(mark, rows, visual.coordinate ?? { type: "cartesian" });
+      const primitive = compilePrimitive(mark, rows, visual.coordinate ?? { type: "cartesian" }, describeMarkIdentity(visual, mark, "primitive", rows));
       primitives.push(primitive);
       layers.push({ renderer: "primitive", primitive });
     }
   }
   if (primitives.length) result.primitives = primitives;
   if (primitives.length) result.layers = layers;
+  result.identity = renderIdentity(visual, layers.map((layer) => layer.renderer === "plot" ? layer.mark.identity : layer.primitive.identity));
   return result;
 }

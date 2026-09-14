@@ -80,6 +80,23 @@ export type CoordinateSpec = { type: "cartesian" | "polar" };
 
 export type RendererKind = "plot" | "primitive";
 
+export type RenderIdentityMode = "datum" | "series" | "singleton" | "nonretainable";
+
+export interface MarkIdentityDescriptor {
+  mark_id: string;
+  renderer: RendererKind;
+  mark_type: string;
+  identity_mode: RenderIdentityMode;
+  key_fields: string[];
+  series_fields?: string[];
+  layer_key: string;
+}
+
+export interface RenderIdentityContract {
+  visual_key: string;
+  marks: MarkIdentityDescriptor[];
+}
+
 export interface EncodingRef {
   field?: string;
   constant?: JsonValue;

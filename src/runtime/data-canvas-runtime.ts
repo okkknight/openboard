@@ -2,7 +2,7 @@ import { observe, type Observation } from "../core/observation.js";
 import { assertRenderable, compileQuery } from "../core/query-compiler.js";
 import { RevisionConflictError, SceneStore, type HistoryMutationResult } from "../core/scene-store.js";
 import type { HistoryStoreSeed } from "../core/history-store.js";
-import type { AnnotationSpec, ComposeInput, DatasetSpec, EffectiveScene, HistoryApplyInput, JsonObject, QuerySpec, Scene, VisualPatch, VisualSpec, WorkingVisual, WorkingVisualDraft, WorkActivity, WorkSession } from "../core/types.js";
+import type { AnnotationSpec, ComposeInput, DatasetSpec, EffectiveScene, HistoryApplyInput, JsonObject, QuerySpec, RenderIdentityContract, Scene, VisualPatch, VisualSpec, WorkingVisual, WorkingVisualDraft, WorkActivity, WorkSession } from "../core/types.js";
 import { DuckDbEngine, type InspectOptions, type DatasetInspection } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
@@ -13,12 +13,21 @@ export interface RuntimeResult {
   status: "rendered" | "working";
   canvas_id: string;
   revision: number;
-  result: { visual: WorkingVisual; rows: number; columns: string[]; plot: PlotConfig };
+  result: { visual: WorkingVisual; rows: number; columns: string[]; plot: PlotConfig; artifact: RenderArtifactV2 };
   observation: Observation;
 }
 
 interface RenderPayload { rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation; }
 interface RenderArtifact { visual: VisualSpec; revision: number; payload: RenderPayload; generation: number; }
+
+export interface RenderArtifactV2 {
+  artifact_version: 2;
+  visual_id: string;
+  generation: number;
+  revision: number;
+  work_id?: string;
+  identity: RenderIdentityContract;
+}
 
 export interface RuntimeOptions { point_limit?: number; engine?: DuckDbEngine; }
 
@@ -111,7 +120,7 @@ export class DataCanvasRuntime {
     if (!isCompleteVisual(visual)) return this.#workingResponse(visual, durable.revision);
     const key = this.#artifactKey(id, durable.revision, workId);
     const artifact = await this.#artifactFor(key, visual, durable.revision, workId);
-    return this.#response(artifact.visual, artifact.revision, artifact.payload);
+    return this.#response(artifact, workId);
   }
 
   async visualCreate(visual: VisualSpec | WorkingVisualDraft, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
@@ -195,7 +204,7 @@ export class DataCanvasRuntime {
     const artifact = await this.#artifactFor(key, visual, durable.revision, workId);
     const changed = this.#works.next(workId);
     this.#emitWork("work.visual.changed", changed, id);
-    return this.#response(artifact.visual, artifact.revision, artifact.payload);
+    return this.#response(artifact, workId);
   }
 
   async #implicitWork<T extends { revision: number }>(expectedRevision: number | undefined, operation: (workId: string) => Promise<T>): Promise<T> {
@@ -276,11 +285,21 @@ export class DataCanvasRuntime {
     if (!dataset) throw new Error(`not_found: dataset ${id}`);
     return dataset;
   }
-  #response(visual: VisualSpec, revision: number, payload: RenderPayload): RuntimeResult {
-    return { status: "rendered", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: payload.rows.length, columns: payload.columns, plot: payload.plot }, observation: payload.observation };
+  #response(artifact: RenderArtifact, workId?: string): RuntimeResult {
+    const { visual, revision, payload, generation } = artifact;
+    const artifactV2: RenderArtifactV2 = {
+      artifact_version: 2,
+      visual_id: visual.id,
+      generation,
+      revision,
+      ...(workId ? { work_id: workId } : {}),
+      identity: payload.plot.identity ?? { visual_key: `visual:${visual.id}`, marks: [] }
+    };
+    return { status: "rendered", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: payload.rows.length, columns: payload.columns, plot: payload.plot, artifact: artifactV2 }, observation: payload.observation };
   }
   #workingResponse(visual: WorkingVisual, revision: number): RuntimeResult {
-    return { status: "working", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: 0, columns: [], plot: { data: [], marks: [] } }, observation: emptyObservation() };
+    const identity = { visual_key: `visual:${visual.id}`, marks: [] };
+    return { status: "working", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: 0, columns: [], plot: { data: [], marks: [], identity }, artifact: { artifact_version: 2, visual_id: visual.id, generation: 0, revision, identity } }, observation: emptyObservation() };
   }
   #workResult(work: WorkSession): { status: "ok"; canvas_id: string; revision: number; result: { work_id: string; base_revision: number; sequence: number } } {
     return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision, result: { work_id: work.id, base_revision: work.base_revision, sequence: work.sequence } };

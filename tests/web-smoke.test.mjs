@@ -131,6 +131,17 @@ test("serves active work snapshots over HTTP and the WebSocket connection", asyn
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves browser render identity metadata without DOM inference", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "identity-asset", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const registry = await fetch(`http://127.0.0.1:${server.port}/assets/render-identity-registry.js`).then((response) => response.text());
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(registry, /createRenderIdentityRegistry/);
+    assert.match(html, /renderIdentity\.remember\(payload\.result\.artifact/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a local Plot bundle and a rendered visual payload", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "render", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } });

@@ -61,6 +61,7 @@
   <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
   <script type="module">
     import { acceptWorkEvent } from '/assets/work-event-order.js';
+    import { createRenderIdentityRegistry } from '/assets/render-identity-registry.js';
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -78,6 +79,7 @@
     const renderedVisualSignatures = new Map();
     const activeWorks = new Map();
     const lastSequence = new Map();
+    const renderIdentity = createRenderIdentityRegistry();
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
     const setDetailsVisible = (visible) => {
@@ -252,6 +254,7 @@
       const response = await fetch(url);
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
       const payload = await response.json();
+      renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
       const animate = !workId && shouldAnimateVisual(visual);
       let card = cardFor(id);

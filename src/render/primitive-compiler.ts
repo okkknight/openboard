@@ -1,4 +1,5 @@
-import type { CoordinateSpec, EncodingRef, EncodingSpec, EncodingValue, JsonObject, JsonValue, MarkSpec, PrimitiveMarkType } from "../core/types.js";
+import type { CoordinateSpec, EncodingRef, EncodingSpec, EncodingValue, JsonObject, JsonValue, MarkIdentityDescriptor, MarkSpec, PrimitiveMarkType } from "../core/types.js";
+import { renderKeys } from "./render-identity.js";
 
 export interface PrimitiveLayer {
   id: string;
@@ -6,6 +7,7 @@ export interface PrimitiveLayer {
   coordinate: CoordinateSpec["type"];
   values: JsonObject[];
   options: JsonObject;
+  identity: MarkIdentityDescriptor;
 }
 
 const DANGEROUS_KEY = /^(?:script|html|style|on[a-z]+|javascript)$/i;
@@ -107,12 +109,15 @@ function compileRows(mark: MarkSpec, rows: JsonObject[]): JsonObject[] {
   });
 }
 
-export function compilePrimitive(mark: MarkSpec, rows: JsonObject[], coordinate: CoordinateSpec = { type: "cartesian" }): PrimitiveLayer {
+export function compilePrimitive(mark: MarkSpec, rows: JsonObject[], coordinate: CoordinateSpec = { type: "cartesian" }, identity?: MarkIdentityDescriptor): PrimitiveLayer {
   const options = safeOptions(mark.options);
   if (mark.type === "path") {
     const d = options.d;
     if (typeof d !== "string" || !SAFE_PATH.test(d)) throw new Error("invalid_path: path d must contain only SVG geometry commands");
   }
   const values = mark.type === "arc" ? compileArc(mark, rows, coordinate.type) : compileRows(mark, rows);
-  return { id: mark.id, type: mark.type as PrimitiveMarkType, coordinate: coordinate.type, values, options };
+  const resolvedIdentity = identity ?? { mark_id: mark.id, renderer: "primitive" as const, mark_type: mark.type, identity_mode: "nonretainable" as const, key_fields: [], layer_key: `primitive:${mark.id}` };
+  const keys = renderKeys(resolvedIdentity, rows);
+  for (const [index, value] of values.entries()) if (keys[index] !== undefined) value.render_key = keys[index];
+  return { id: mark.id, type: mark.type as PrimitiveMarkType, coordinate: coordinate.type, values, options, identity: resolvedIdentity };
 }
