@@ -7,7 +7,7 @@
   <style>
     :root { color-scheme: dark; --bg: #0d1117; --panel: #151b24; --panel-2: #1b2430; --line: #2b3645; --muted: #9aa8ba; --text: #edf3fb; --accent: #6bd8c4; --focus: #f6c86e; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-width: 960px; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    body { margin: 0; min-width: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; }
     header { height: 64px; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(13,17,23,.94); position: sticky; top: 0; z-index: 5; }
     .brand { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
     .eyebrow { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
@@ -112,6 +112,22 @@
       if (!card) return;
       if (!motionReduced()) await card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-8px) scale(.98)' }], { duration: 160, easing: 'ease-in', fill: 'both' }).finished.catch(() => {});
       card.remove();
+    }
+    function revealNewVisual(card) {
+      if (!card?.isConnected) return;
+      requestAnimationFrame(() => { if (card.isConnected) card.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' }); });
+    }
+    function fitView() {
+      const cards = [...board.querySelectorAll('.visual-card')];
+      if (!cards.length) return;
+      const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width)));
+      const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height)));
+      const availableWidth = Math.max(1, Math.min(viewport.clientWidth, window.innerWidth));
+      const availableHeight = Math.max(1, Math.min(viewport.clientHeight, window.innerHeight - 64));
+      zoom = Math.min(1, (availableWidth - 48) / right, (availableHeight - 48) / bottom);
+      board.style.transform = `scale(${zoom})`;
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
     }
     const markToPlot = (mark, data) => {
       const factory = Plot[mark.type];
@@ -291,7 +307,9 @@
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
       let card = cardFor(id);
+      let createdCard = false;
       if (!card) {
+        createdCard = true;
         card = document.createElement('article'); card.className = 'visual-card'; card.dataset.visual = id;
         const head = document.createElement('div'); head.className = 'visual-head';
         const title = document.createElement('span'); title.className = 'visual-title';
@@ -301,6 +319,7 @@
       }
       card.querySelector('.visual-title').textContent = visual.title || id;
       applyLayout(card, visualLayout(visual));
+      if (createdCard) revealNewVisual(card);
       const plot = card.querySelector('.plot');
       try {
         const renderRows = plotData(payload.result.plot.data);
@@ -346,9 +365,11 @@
     }
 
     async function renderEffectiveScene() {
+      const existingIds = new Set([...board.querySelectorAll('.visual-card')].map((card) => card.dataset.visual));
       updateScene(mergeEffectiveScene());
       for (const card of board.querySelectorAll('.visual-card')) if (!scene.visuals[card.dataset.visual]) card.remove();
       await Promise.all(Object.keys(scene.visuals).map((id) => render(id)));
+      if (Object.keys(scene.visuals).some((id) => !existingIds.has(id))) fitView();
       empty.hidden = board.querySelectorAll('.visual-card').length > 0;
     }
     async function reloadScene() {
@@ -358,7 +379,7 @@
       for (const snapshot of workSnapshot.works) activeWorks.set(snapshot.work.id, snapshot.work);
       await renderEffectiveScene();
     }
-    document.querySelector('#fit').addEventListener('click', () => { const cards = [...board.querySelectorAll('.visual-card')]; if (!cards.length) return; const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width))); const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height))); zoom = Math.min(1, (viewport.clientWidth - 48) / right, (viewport.clientHeight - 48) / bottom); board.style.transform = `scale(${zoom})`; });
+    document.querySelector('#fit').addEventListener('click', fitView);
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
     toggleDetails.addEventListener('click', () => setDetailsVisible(false));
     showDetails.addEventListener('click', () => setDetailsVisible(true));

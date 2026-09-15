@@ -3,9 +3,47 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
+import { toolSchemas } from "../mcp/schemas.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
+import type { QuerySpec, VisualPatch, VisualSpec, WorkingVisualDraft } from "../core/types.js";
 
 export interface RunningWebServer { port: number; close(): Promise<void>; }
+
+const json = (response: ServerResponse, status: number, payload: unknown): void => {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(payload));
+};
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > 1_000_000) throw new Error("request_too_large");
+    chunks.push(buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function placementLayout(runtime: DataCanvasRuntime, placement: "auto" | "right" | "left" | "below" | "above") {
+  const visuals = Object.values(runtime.inspect().visuals);
+  const size = { w: 480, h: 320 };
+  if (!visuals.length) return { x: 0, y: 0, ...size };
+  const anchor = visuals.at(-1)!.layout;
+  if (placement === "left") return { x: anchor.x - size.w - 24, y: anchor.y, ...size };
+  if (placement === "below") return { x: anchor.x, y: anchor.y + anchor.h + 24, ...size };
+  if (placement === "above") return { x: anchor.x, y: anchor.y - size.h - 24, ...size };
+  return { x: anchor.x + anchor.w + 24, y: anchor.y, ...size };
+}
+
+function mutationError(error: unknown): { status: number; body: Record<string, unknown> } {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = message.split(":", 1)[0];
+  const status = code === "not_found" ? 404 : code === "revision_conflict" ? 409 : 400;
+  return { status, body: { status: "error", error: { code, message } } };
+}
 
 export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/index.html");
@@ -18,6 +56,80 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "POST" && url.pathname === "/api/work") {
+      try {
+        const parsed = toolSchemas["work.apply"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        json(response, 200, await runtime.workApply(parsed.data));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname.startsWith("/api/work/")) {
+      try {
+        const workId = decodeURIComponent(url.pathname.slice("/api/work/".length));
+        const parsed = toolSchemas["work.apply"].safeParse({ ...(await readJson(request) as Record<string, unknown>), work_id: workId });
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        json(response, 200, await runtime.workApply(parsed.data));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/data/inspect") {
+      try {
+        const parsed = toolSchemas["data.inspect"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        const dataset = await runtime.dataInspect(parsed.data.dataset, { fields: parsed.data.fields, top_k: parsed.data.top_k, sample_rows: parsed.data.sample_rows }, parsed.data.work_id);
+        const scene = runtime.inspect();
+        json(response, 200, { status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result: { dataset } });
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/data/query") {
+      try {
+        const parsed = toolSchemas["data.query"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        const result = await runtime.dataQuery(parsed.data.dataset, parsed.data.query as unknown as QuerySpec, parsed.data.work_id);
+        const scene = runtime.inspect();
+        json(response, 200, { status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result });
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/visual") {
+      try {
+        const parsed = toolSchemas["visual.create"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        const input = parsed.data;
+        const id = input.id ?? `v${Object.keys(runtime.inspect().visuals).length + 1}`;
+        const visual: VisualSpec | WorkingVisualDraft = input.work_id
+          ? { id, kind: input.kind, title: input.title, source: input.source, query: input.query as QuerySpec | undefined, coordinate: input.coordinate, marks: input.marks, layout: input.layout ?? placementLayout(runtime, input.placement) } as WorkingVisualDraft
+          : { id, kind: input.kind, title: input.title, source: String(input.source), query: input.query as QuerySpec, coordinate: input.coordinate, marks: input.marks, layout: input.layout ?? placementLayout(runtime, input.placement) } as VisualSpec;
+        json(response, 200, await runtime.visualCreate(visual, input.expected_revision, input.work_id));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/visual/")) {
+      try {
+        const id = decodeURIComponent(url.pathname.slice("/api/visual/".length));
+        const body = await readJson(request);
+        const parsed = toolSchemas["visual.patch"].safeParse({ ...(body as Record<string, unknown>), id });
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        json(response, 200, await runtime.visualPatch(parsed.data.id, parsed.data.patch as unknown as VisualPatch, parsed.data.expected_revision, parsed.data.work_id));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/visual/")) {
+      try {
+        const id = decodeURIComponent(url.pathname.slice("/api/visual/".length));
+        if (!id) { json(response, 400, { status: "invalid_spec", error: { code: "invalid_visual_id", message: "visual id is required" } }); return; }
+        const expectedRevisionValue = url.searchParams.get("expected_revision");
+        const expectedRevision = expectedRevisionValue === null ? undefined : Number(expectedRevisionValue);
+        if (expectedRevisionValue !== null && (expectedRevision === undefined || !Number.isInteger(expectedRevision) || expectedRevision < 0)) {
+          json(response, 400, { status: "invalid_spec", error: { code: "invalid_expected_revision", message: "expected_revision must be a non-negative integer" } });
+          return;
+        }
+        json(response, 200, await runtime.canvasCompose({ action: "delete", target: id }, expectedRevision));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
     if (request.url === "/api/scene") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(runtime.inspect()));

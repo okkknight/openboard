@@ -85,6 +85,18 @@ test("serves websocket reconnect logic that reloads the scene", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("keeps newly created visuals visible in the actual browser viewport", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "viewport-visibility", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /function revealNewVisual/);
+    assert.match(html, /scrollIntoView\(\{ behavior: 'instant', block: 'nearest', inline: 'nearest' \}\)/);
+    assert.match(html, /Math\.min\(viewport\.clientWidth, window\.innerWidth\)/);
+    assert.doesNotMatch(html, /body \{ margin: 0; min-width: 960px;/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("refreshes durable metadata after a visual removal event", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "remove-refresh", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
@@ -133,6 +145,100 @@ test("broadcasts a visual mutation revision over WebSocket", async () => {
     });
     assert.equal(event.type, "work.completed");
     assert.equal(event.revision, 2);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("creates a visual through the live web control path without restarting the server", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "live-control", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    await new Promise((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+    const waitForVisualEvent = (expectedRevision) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for live visual event")), 3000);
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.type === "work.completed" && message.revision === expectedRevision) { clearTimeout(timer); resolve(message); }
+      });
+      socket.once("error", reject);
+    });
+    const eventPromise = waitForVisualEvent(1);
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/visual`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "live-bar", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } })
+    });
+    assert.equal(response.status, 200);
+    const event = await eventPromise;
+    const patchEventPromise = waitForVisualEvent(2);
+    const patchResponse = await fetch(`http://127.0.0.1:${server.port}/api/visual/live-bar`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patch: { set: { title: "Live bar" } } })
+    });
+    assert.equal(patchResponse.status, 200);
+    await patchEventPromise;
+    const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`).then((result) => result.json());
+    assert.equal(scene.visuals["live-bar"].id, "live-bar");
+    assert.equal(scene.visuals["live-bar"].title, "Live bar");
+    socket.close();
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("deletes a visual through the live web control path", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "live-delete", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  await runtime.visualCreate({ id: "delete-me", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 300, h: 200 } });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    await new Promise((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+    const eventPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for visual removal event")), 3000);
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.type === "visual.removed" && message.visual_id === "delete-me") { clearTimeout(timer); resolve(message); }
+      });
+      socket.once("error", reject);
+    });
+    const response = await fetch(`http://127.0.0.1:${server.port}/api/visual/delete-me`, { method: "DELETE" });
+    assert.equal(response.status, 200);
+    await eventPromise;
+    const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`).then((result) => result.json());
+    assert.equal(scene.visuals["delete-me"], undefined);
+    socket.close();
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("runs an explicit multi-stage work session through the live web control path", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "explicit-live", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    const events = [];
+    socket.on("message", (data) => events.push(JSON.parse(data.toString())));
+    await new Promise((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
+    const call = async (path, body) => fetch(`http://127.0.0.1:${server.port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const begun = await call("/api/work", { action: "begin" }).then((response) => response.json());
+    const workId = begun.result.work_id;
+    const draft = await call("/api/visual", { id: "explicit-bar", kind: "plot", title: "Orders by channel", placement: "right", work_id: workId }).then((response) => response.json());
+    const inspected = await call("/api/data/inspect", { dataset: "orders", work_id: workId }).then((response) => response.json());
+    const queried = await call("/api/data/query", { dataset: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, work_id: workId }).then((response) => response.json());
+    const created = await fetch(`http://127.0.0.1:${server.port}/api/visual/explicit-bar`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ work_id: workId, patch: { set: { source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }] } } }) }).then((response) => response.json());
+    const committed = await call(`/api/work/${workId}`, { action: "commit" }).then((response) => response.json());
+    assert.equal(draft.status, "working");
+    assert.deepEqual(draft.result.visual.layout, { x: 0, y: 0, w: 480, h: 320 });
+    assert.equal(inspected.status, "ok");
+    assert.equal(queried.status, "ok");
+    assert.equal(created.status, "rendered");
+    assert.equal(committed.status, "ok");
+    assert.ok(events.some((event) => event.type === "work.started" && event.work_id === workId));
+    assert.ok(events.some((event) => event.type === "work.activity" && event.activity?.kind === "inspect"));
+    assert.ok(events.some((event) => event.type === "work.activity" && event.activity?.kind === "query"));
+    assert.ok(events.some((event) => event.type === "work.completed" && event.work_id === workId));
+    const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`).then((response) => response.json());
+    assert.equal(scene.visuals["explicit-bar"].id, "explicit-bar");
+    assert.deepEqual(scene.visuals["explicit-bar"].layout, { x: 0, y: 0, w: 480, h: 320 });
+    socket.close();
   } finally { await server.close(); runtime.close(); }
 });
 
