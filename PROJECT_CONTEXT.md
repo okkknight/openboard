@@ -1,103 +1,98 @@
 # OpenBoard 项目上下文
 
-更新时间：2026-09-14
-权威入口：本文件 + `AGENTS.md` + 当前源码；专题审计和实现报告按下方索引阅读。
+更新时间：2026-09-17
+权威入口：本文件、`AGENTS.md`、当前源码与 `docs/handoff/`。设计以 `docs/superpowers/specs/2026-09-09-data-canvas-v1-design.md` 为准。
 
 ## 项目是什么
 
-OpenBoard 是给 Codex 等本地 AI agent 使用的 Data Canvas 可视化运行时。数据文件是输入，Scene 是持久化画布状态，MCP 工具负责检查数据、查询、创建/修改视觉对象，浏览器通过 HTTP/WebSocket 显示当前画布。
+OpenBoard 是面向 Codex 和其他 agent 的 Data Canvas 运行时：本地或云端数据进入 DuckDB，agent 通过一小组 MCP 工具表达分析，浏览器在同一持久画布上显示结果。`Scene` 是唯一 durable product state；SVG/DOM 和 render artifact 都是可丢弃的派生产物。
 
 ## 项目不是什么
 
-V1 不是 BI/dashboard builder、图表模板市场、字段管理后台、云同步、认证系统、聊天 UI 或 HTML 生成器。Renderer 输出的 SVG/DOM 是 disposable，不写入 Scene/history。
+它不是 dashboard builder、模板市场、字段后台、认证/云同步系统、聊天 UI，也不以生成 HTML 作为分析结果。V1 不引入新的 BI 概念。
 
-## 当前产品状态
+## 当前状态
 
-- V1 M0/M1 已在 `main` 落地：CSV/Parquet 发现、DuckDB 查询、Scene/history/persistence、MCP surface、Observable Plot、primitive SVG marks、WebSocket 画布和 WorkSession Live Construction。
-- Live Construction 当前是 LC0+LC1：先让 working overlay/event 可见，再执行真实 inspect/query/render，最后由 `work.commit` 一次性写入 durable Scene revision。
-- 当前 renderer 仍是“卡片外壳保留、`.plot` 内部整棵 SVG 重建”；LC2 retained mark diff 尚未实现。
-- 当前运行 Scene（通过 `GET /api/scene` 核验）：`canvas_id=openboard`、revision `24`、dataset `orders`、visuals `orders-donut-live` / `orders-by-channel-vivid-bar` / `orders-daily-live-line`、annotation `a1`。
+- 当前实现分支：`codex/lc2-retained-construction`，最新提交 `c2b2082 feat: complete LC2 live construction runtime`；该提交尚未合入 `main`。
+- M0/M1 已具备 CSV/Parquet discovery、DuckDB QuerySpec/受限 SQL、Scene/history/persistence、组合式 visual grammar、WebSocket canvas、clone/compose/annotate/history 与 render limit。
+- LC2 已实现真实 DuckDB chunk 流、work-scoped immutable render artifact、有序 work event、浏览器仅更新受影响卡片、working draft 首帧和 keyed SVG reconciliation。
+- 图表 create/patch/clone 必须使用显式 `work.apply(begin)` 和 `work_id`；不存在 implicit WorkSession 后门。
+- 云端部署已运行同一份 runtime：公网 Canvas 和 HTTP MCP 共用 Scene、WorkSession、WebSocket 与 `.datacanvas` 持久状态。
 
 ## 当前最新任务
 
-Renderer-specific audit（为后续 LC2-A 做依据，不修改生产代码、不实现 LC2）。
+**LC2 实现、云端 MCP 部署与流式饼图修复**。执行状态：**已执行待验收**。
 
-执行状态：**已执行待验收**。报告和 DOM map 已提交；推荐 LC2-A 从 **B — RenderArtifact diff** 切入，尚未开始实现。
+技术验证已完成：本地 `npm run verify:core` 为 134/134；2026-09-17 云端 `openboard.service`、本机 health 与公网 health 均返回 revision 2；Playwright 真实浏览器验证过已连接 WebSocket、LC2 work stages 和居中的四分扇饼图。仍需用户自行确认实际交互体验满足预期。
 
-## 架构/状态流（说人话）
+## 架构/状态流
 
 ```text
-Codex -> MCP stdio -> DataCanvasRuntime
-      -> WorkSession overlay（工作态，内存）
-      -> DuckDB inspect/query -> observation + compilePlot/compilePrimitive
-      -> WebSocket work events -> browser effective scene
-      -> Plot.plot / primitive SVG -> replaceChildren（当前整棵图替换）
-      -> work.commit -> SceneStore revision/history/persistence（唯一 durable state）
+MCP stdio 或 HTTP
+  -> DataCanvasRuntime
+  -> WorkSession overlay（ephemeral，不写 durable Scene）
+  -> DuckDB inspect/count/stream（真实 chunks）
+  -> 每个 chunk 的 immutable render artifact + ordered WebSocket event
+  -> 浏览器 event queue：先同步创建 working card，再只刷新该 visual
+  -> work.apply(commit)：一次 Scene revision/history/persistence 写入
 ```
 
-普通单步视觉操作会由 runtime 自动包一层 implicit WorkSession；所有视觉变化都应先有 working 状态，再进行真实渲染。Scene revision 每次 durable mutation 只增加一次。
+浏览器先收到 `work.visual.changed`，显示真实草稿卡；数据到达后按 `work.render.chunk` 的 artifact generation 更新。不会用 timer/replay/拆分 bars 来伪造进度。查询很快时阶段仍可能很短，这是正常的真实执行结果。
 
-## 已核验命令和结果
+## 关键文件
 
-在仓库根目录执行：
+- `AGENTS.md`：不可违背的架构、LC 与显式 WorkSession 规则。
+- `src/runtime/data-canvas-runtime.ts`：work orchestration、artifact generations、真实 stream、commit/cancel。
+- `src/core/scene-store.ts`、`src/runtime/work-session-store.ts`：durable Scene/history 与 ephemeral overlay 的边界。
+- `src/data/duckdb-engine.ts`：DuckDB inspect/query/count/stream。
+- `src/web/server.ts`：HTTP API、`/ws`、HTTP MCP、asset/query-string 路由。
+- `web/index.html`：working card、work event queue、增量 visual render 与画布 UI。
+- `web/render-reconciler.js`、`web/render-motion.js`：keyed SVG reconciliation、arc-safe 动画。
+- `src/index.ts`：stdio/HTTP MCP transport 与共享 runtime 装配。
+- `contracts/tool-surface.json`、`contracts/events.schema.json`：冻结的 MCP/event 合同。
+- `deploy/openboard.service`、`deploy/*.caddy`、`docs/remote-mcp.md`：云端运行和接入方式。
+- `.datacanvas/`：真实持久 Scene/history/snapshots；同步部署时必须排除。
+
+## 已核验命令
+
+在当前工作树：
 
 ```bash
 npm run verify:core
 ```
 
-结果：contracts 校验通过，TypeScript 构建通过，86 个测试全部通过（0 fail）。
+2026-09-17 结果：contracts 通过，TypeScript build 通过，134 个 Node 测试通过、0 fail。
+
+云端只做无副作用检查：
 
 ```bash
-curl -i http://127.0.0.1:3000/
-curl -i http://127.0.0.1:3000/api/scene
-lsof -nP -iTCP:3000 -sTCP:LISTEN
+curl -fsS https://boringmax.com/openboard/healthz
+ssh tencent-vps 'systemctl --user is-active openboard.service'
 ```
 
-最近核验：根页面和 Scene 均 HTTP 200；Node 服务监听 `127.0.0.1:3000`。`npm start` 会先 `npm run build`，再启动 `dist/index.js`；MCP 通过同一进程的 stdio 提供。
+最近结果：服务为 `active`，health 返回 `{status:"ok", service:"openboard", canvas_id:"openboard", revision:2}`。公网 Canvas 是 `https://boringmax.com/openboard/`；HTTP MCP 是 `/openboard/mcp`，需要环境变量中的 bearer token，绝不能写入仓库、日志或交接文档。
 
-## 关键文件（快速导航）
+## 运行与部署注意事项
 
-- `AGENTS.md`：本项目不可违背的架构规则。
-- `IMPLEMENTATION_PROMPT.md`：工具调用与 LC0/LC1 工作规则。
-- `src/runtime/data-canvas-runtime.ts`：Scene、WorkSession、artifact cache、render、事件和 commit 编排。
-- `src/core/scene-store.ts`、`src/core/work-session-store.ts`：durable Scene 与 ephemeral overlay。
-- `src/render/plot-compiler.ts`、`src/render/primitive-compiler.ts`、`src/render/renderer-registry.ts`：组合式 marks 与 renderer 选择。
-- `web/index.html`：当前 vanilla browser renderer、WebSocket 重连、动画和 `replaceChildren` 边界。
-- `src/web/server.ts`：HTTP `/api/scene`、`/api/visual/:id`、`/ws`。
-- `contracts/`：scene/tool/event/output 合同。
-- `.datacanvas/`：本地 scene、JSONL history、snapshots、checkpoint/fork metadata；不要把 DOM/HTML 写进去。
-- `openboard-lc2-engineering-package/source-audits/RENDERER_IMPLEMENTATION_REPORT.md`、`openboard-lc2-engineering-package/source-audits/RENDERER_DOM_MAP.txt`：2026-09-14 Renderer-specific audit（当前最新专题资料）。
-- `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md`：LC0+LC1 实现和测试证据。
-- `docs/superpowers/specs/2026-09-09-data-canvas-v1-design.md`、`docs/superpowers/plans/2026-09-14-live-construction-lc0-lc1.md`：设计/计划依据。
-
-## 历史文档的注意事项
-
-`openboard-lc2-engineering-package/source-audits/CURRENT_IMPLEMENTATION_MAP.txt` 和 `openboard-lc2-engineering-package/source-audits/CURRENT_IMPLEMENTATION_REPORT.md` 是 LC0+LC1 之前生成的架构快照，仍可作为历史对照，但其中“visual mutation 先完整 render、没有 work”不代表当前源码。判断当前行为应以 `src/`、`web/`、测试和 `LIVE_CONSTRUCTION_IMPLEMENTATION_REPORT.md` 为准。
-
-## 运行时注意事项
-
-- 这是本机单进程、loopback-first 服务；不要默认暴露公网。
-- `.datacanvas` 是当前用户的真实运行状态，改动前先检查 `git status` 和 Scene revision。
-- 浏览器目前会在每次完成视觉 fetch 后新建 Plot SVG，再 `plot.replaceChildren(svg)`；现有动画是最终结果的 entrance animation，不是 retained diff。
-- WebSocket work event 有 sequence 接收顺序保护，但浏览器 `render(id)` 没有请求取消/响应 token；乱序响应覆盖风险仍待 LC2-A 处理。
-- 当前没有 10/100/1000 点浏览器基准；不要仅凭 HTTP 200 或服务 active 宣称大数据性能。
+- 本地默认 `OPENBOARD_MCP_TRANSPORT=stdio`；共享部署使用 `http`，由同一 Node 进程同时服务 Canvas、`/ws` 和 `/mcp`。
+- 云端是 systemd user service，监听 `127.0.0.1:4324`；Caddy 以 `/openboard` 反代。不要直接暴露 Node 端口，也不要启动第二个 MCP/runtime。
+- 部署用 rsync 时排除 `.datacanvas/`、`node_modules/`、`dist/` 和 secret env 文件；先在云端 build，再 restart service，再检查 health。`.datacanvas` 被覆盖会把本地路径带到云端。
+- Caddy 对 OpenBoard 路径必须发 `Cache-Control: no-store, max-age=0`。模块 URL 稳定时，旧缓存会让浏览器继续执行旧 renderer；当前 `render-motion.js` 另带发布查询参数作为一次性迁移保护。
+- 浏览器初次连接会 reload durable scene 和 active work snapshots。正常图表操作不应重启服务或刷新页面。
 
 ## 后续 agent 工作规则
 
-- 先读本文件、`AGENTS.md` 和相关专题报告，再看代码；不要按历史快照推断现状。
-- 保持 Scene renderer-independent；不要生成 HTML 作为分析结果，不要把 SVG/DOM 写进 Scene/history。
-- 修改当前 visual 时优先 patch；只有明确需要并行比较/分支时才 clone。
-- 不得 silent sampling；超过 point limit 要求显式聚合/binning/sampling。
-- LC2-A 尚未获实现授权：先围绕 RenderArtifact key/schema、缓存失效、浏览器 retained renderer、乱序响应测试写计划，确认后再改代码。
-- 任何行为改动先 TDD，再跑 `npm run verify:core`；保留与任务无关的改动。
+- 先读本文件、`AGENTS.md`、设计 spec、contracts 和相关测试，再改代码；以当前源码和测试为准，不按历史 audit 推断行为。
+- Scene 必须 renderer-independent；不得写入 DOM/SVG/HTML。修改已有图优先 `visual.patch`，仅比较/分支才 clone。
+- 分析型视觉操作必须显式 begin → 真实 inspect/query/render → commit/cancel；活动事件必须来自真实操作，禁止 fake progress。
+- 不得 silent sampling；超 limit 必须返回 `render_limit_exceeded` 并要求显式 aggregate/bin/sample。
+- 行为修改先写回归测试，再执行 `npm run verify:core`；提交前检查 `git diff --check` 与 staged scope。
+- 不暴露 MCP token、云端 env、`.datacanvas` 内容或用户数据。
 
-## 尚待人工确认的决策
+## 未决决策、风险与跨功能影响
 
-- 是否正式启动 LC2-A，以及是否接受推荐的 B（RenderArtifact diff）而非 A（直接 SVG diff）或 C（先建 RenderTree）。
-- datum key 采用哪些稳定字段、如何处理聚合行/重复 key、line/area series 与 point 的层级关系。
-- layout-only 事件是否改为只更新受影响 card，避免全场重查重画。
-- 是否为浏览器 render 请求加入 AbortController/sequence token，以及 LC2-A 的 10/100/1000 点验收阈值。
-
-## 风险与跨功能影响
-
-当前主要风险是图内节点无稳定业务 key、Plot/primitive 混合层没有 retained tree、异步浏览器响应可能乱序。LC2-A 会同时触及 `RenderArtifact`、plot/primitive compiler、browser renderer、animation 和 WebSocket 测试；可能影响 bar/line/area/dot、polar arc、annotations、layout reload 和 WorkSession 预览，必须做回归验证。当前交接动作本身只新增文档，不改变这些功能。
+- **合并决策**：`c2b2082` 尚在 LC2 分支；是否合入 `main` 需要用户确认并在合并前检查 main 的最新状态。
+- **用户验收**：真实流在小数据上可能极快，不能人为减速。需由用户确认 working card/LC2 trail 的可见性是否符合产品预期。
+- **权限与 token 分发**：用户明确先不处理权限；当前 HTTP MCP 是 bearer token 模式，后续多-agent 正式接入仍需决定密钥轮换、客户端配置与审计边界。
+- **发布可靠性**：当前部署为人工 rsync + build + restart，尚无 CI/CD、蓝绿或自动回滚；Caddy no-store 牺牲静态资源缓存以保证 renderer 版本一致。
+- **跨功能影响**：LC2 涉及 MCP schemas、Scene/work boundary、DuckDB streaming、WebSocket、浏览器 reconciliation、polar arcs 与 Caddy cache。后续修改必须回归 bar/line/area/dot、table/KPI、polar arc、history/persistence、layout-only 更新和远程 HTTP MCP。

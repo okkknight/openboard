@@ -2,6 +2,14 @@
 
 本文件 append-only，只写能帮助后续 agent 恢复工作的长期事实，不重复完整状态报告。
 
+## 2026-09-17
+
+- `c2b2082` 完成 LC2 retained construction：显式 WorkSession 入口、真实 DuckDB chunk stream、per-chunk immutable artifact、ordered work event、仅受影响卡片更新、working draft 首帧和 keyed reconciliation。
+- 修复 polar arc 在进入动画中被 CSS transform 覆盖的问题；streamed total 改变时原子替换 arc layer，浏览器实测饼图保持居中。
+- 增加共享云端 runtime：同一进程服务 Canvas、WebSocket 和 bearer-protected HTTP MCP；新增 systemd/Caddy/agent 接入文档。部署同步必须排除 `.datacanvas/`。
+- Caddy 对 OpenBoard 设置 no-store，server 以 `url.pathname` 路由页面与 modules，避免发布后旧 renderer 缓存和带查询参数资产 404。
+- 最后本地核验 `npm run verify:core` 为 134/134；云端 `openboard.service` active，公网 health revision 2。用户最终体验验收仍待完成；该提交仍未合入 `main`。
+
 ## 2026-09-14
 
 - LC0+LC1 已在 `main` 落地：WorkSession working overlay、真实 activity、ordered work events、一次性 durable commit，以及 `/api/works`/WebSocket snapshot。
