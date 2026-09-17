@@ -96,6 +96,7 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
   const annotationRendererPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/annotation-renderer.js");
   const interactionChromePath = join(dirname(fileURLToPath(import.meta.url)), "../../web/interaction-chrome.js");
   const canvasMotionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/canvas-motion.js");
+  const canvasCommitPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/canvas-commit.js");
   const d3Path = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/d3/dist/d3.min.js");
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
@@ -299,6 +300,11 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
     if (url.pathname === "/assets/canvas-motion.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(canvasMotionPath));
+      return;
+    }
+    if (url.pathname === "/assets/canvas-commit.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(canvasCommitPath));
       return;
     }
     if (url.pathname === "/favicon.ico") { response.writeHead(204).end(); return; }

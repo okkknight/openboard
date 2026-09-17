@@ -106,6 +106,7 @@
     import { boundsForLayouts } from '__OPENBOARD_BASE_PATH__/assets/canvas-geometry.js';
     import { createInteractionChrome } from '__OPENBOARD_BASE_PATH__/assets/interaction-chrome.js';
     import { createCanvasMotion } from '__OPENBOARD_BASE_PATH__/assets/canvas-motion.js';
+    import { createCanvasCommitter } from '__OPENBOARD_BASE_PATH__/assets/canvas-commit.js';
     const basePath = '__OPENBOARD_BASE_PATH__';
     const appPath = (path) => `${basePath}${path}`;
     const board = document.querySelector('#board');
@@ -136,7 +137,6 @@
     const objectView = createCanvasObjectView({ board, renderAnnotation: renderAnnotationContent });
     const interactionChrome = createInteractionChrome(board);
     const canvasMotion = createCanvasMotion({ reducedMotion: () => motionReduced() });
-    let pendingGesture = null;
     const objectKey = (element) => `${element.dataset.kind}:${element.dataset.objectId}`;
     const currentLayouts = (keys) => new Map(keys.map((key) => { const split = key.indexOf(':'); const layout = objectView.layoutFor(key.slice(0, split), key.slice(split + 1)); return [key, layout]; }).filter(([, layout]) => layout));
     const allLayoutEntries = () => objectView.allRefs().map((ref) => [`${ref.kind}:${ref.id}`, objectView.layoutFor(ref.kind, ref.id)]).filter(([, layout]) => layout);
@@ -145,13 +145,21 @@
       const selected = currentLayouts(refs.map((ref) => `${ref.kind}:${ref.id}`));
       interactionChrome.renderSelection(selected.size ? boundsForLayouts(selected) : null);
     };
+    const postMutation = async (path, body) => { const response = await fetch(appPath(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const payload = await response.json(); if (!response.ok) throw Object.assign(new Error(payload.error?.message || payload.status), { status: response.status, code: payload.error?.code, body: payload }); return payload; };
+    const applyDurableScene = (next) => { durableScene = next; updateScene(mergeEffectiveScene(), true); };
+    const restoreLayouts = (layouts) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } };
+    const committer = createCanvasCommitter({
+      fetchScene: () => fetch(appPath('/api/scene')).then((response) => response.json()),
+      postCompose: (body) => postMutation('/api/canvas/compose', body), postAnnotate: (body) => postMutation('/api/canvas/annotate', body),
+      applyDurableScene, rollback: restoreLayouts, announce: (message) => interactionChrome.announce(message)
+    });
     const interaction = createInteractionController({
       getRevision: () => durableScene?.revision ?? 0,
       getLayouts: currentLayouts,
       getStationaryLayouts: (selected) => new Map(allLayoutEntries().filter(([key]) => !selected.includes(key))),
       minimumFor: (key) => key.startsWith('annotation:') ? { w: 140, h: 56 } : { w: 260, h: 180 },
       onPreview: (layouts, guides) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } interactionChrome.renderSelection(boundsForLayouts(layouts)); interactionChrome.renderGuides(guides); },
-      onCommit: (gesture) => { pendingGesture = gesture; },
+      onCommit: (gesture) => { void committer.commitLayoutGesture(gesture).catch((error) => { if (error.message !== 'layout_conflict') interactionChrome.announce(error.message); }); },
       onRollback: (layouts, message) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } interactionChrome.announce(message); },
       onSelectionChange: showSelection,
       onMarquee: (bounds) => interactionChrome.renderMarquee(bounds),
@@ -562,10 +570,11 @@
     });
     board.addEventListener('pointermove', (event) => { const phase = interaction.getState().phase; interaction.updatePointer(phase === 'marquee' ? canvasPoint(event) : screenPoint(event), { pointerId: event.pointerId, shiftKey: event.shiftKey, altKey: event.altKey, controlKey: event.ctrlKey }); });
     board.addEventListener('pointerup', (event) => { if (interaction.getState().phase === 'marquee') interaction.finishMarquee(allLayoutEntries()); else interaction.finishPointer({ pointerId: event.pointerId }); });
-    board.addEventListener('dblclick', (event) => { const object = event.target.closest?.('.canvas-object[data-kind="annotation"]'); if (!object) return; interaction.enterEditing(objectKey(object)); const text = object.querySelector('.annotation-text'); text.contentEditable = 'true'; text.focus(); });
+    board.addEventListener('dblclick', (event) => { const object = event.target.closest?.('.canvas-object[data-kind="annotation"]'); if (!object) return; interaction.enterEditing(objectKey(object)); const text = object.querySelector('.annotation-text'); text.dataset.originalText = text.textContent; text.contentEditable = 'true'; text.focus(); });
+    board.addEventListener('focusout', (event) => { const text = event.target.closest?.('.annotation-text[contenteditable="true"]'); if (!text) return; const object = text.closest('.canvas-object'); text.contentEditable = 'false'; interaction.leaveEditing(); if (text.textContent !== text.dataset.originalText) void committer.patchAnnotation({ id: object.dataset.objectId, patch: { text: text.textContent }, baseRevision: durableScene.revision }).catch(() => { text.textContent = text.dataset.originalText; }); });
     window.addEventListener('keydown', (event) => {
       if (event.code === 'Space') { spacePressed = true; return; }
-      if (event.key === 'Escape') { interaction.cancel(); return; }
+      if (event.key === 'Escape') { const editing = board.querySelector('.annotation-text[contenteditable="true"]'); if (editing) { editing.textContent = editing.dataset.originalText; editing.contentEditable = 'false'; interaction.leaveEditing(); editing.closest('.canvas-object')?.focus(); } else interaction.cancel(); return; }
       if (event.key.startsWith('Arrow') && interaction.getState().phase !== 'editing') { const amount = event.shiftKey ? 10 : 1; interaction.nudge({ x: event.key === 'ArrowLeft' ? -amount : event.key === 'ArrowRight' ? amount : 0, y: event.key === 'ArrowUp' ? -amount : event.key === 'ArrowDown' ? amount : 0 }); event.preventDefault(); }
     });
     window.addEventListener('keyup', (event) => { if (event.code === 'Space') spacePressed = false; if (event.key.startsWith('Arrow')) interaction.finishNudge(); });
