@@ -90,6 +90,7 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
   const renderReconcilerPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-reconciler.js");
   const renderMotionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-motion.js");
   const crossMarkTransitionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/cross-mark-transition.js");
+  const canvasGeometryPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/canvas-geometry.js");
   const d3Path = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/d3/dist/d3.min.js");
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
@@ -263,6 +264,11 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
     if (url.pathname === "/assets/cross-mark-transition.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(crossMarkTransitionPath));
+      return;
+    }
+    if (url.pathname === "/assets/canvas-geometry.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(canvasGeometryPath));
       return;
     }
     if (url.pathname === "/favicon.ico") { response.writeHead(204).end(); return; }
