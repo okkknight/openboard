@@ -100,6 +100,16 @@ test("serves the pure canvas geometry module", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves the DOM-independent canvas interaction controller", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "interaction-asset", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/assets/canvas-interaction.js`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /export function createInteractionController/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves MCP HTTP requests through the same runtime as the web canvas", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "mcp-http", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const mcp = createMcpHandler(() => createMcpServer(runtime), { legacy: "stateless" });
