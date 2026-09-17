@@ -271,11 +271,31 @@ test("keeps working status in a separate overlay from the retained render surfac
   const server = await createWebServer(runtime, 0);
   try {
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
-    assert.match(html, /className: 'visual-body'/);
-    assert.match(html, /className: 'working-overlay'/);
+    const objectView = await fetch(`http://127.0.0.1:${server.port}/assets/canvas-object-view.js`).then((response) => response.text());
+    assert.match(objectView, /className = 'object-content'/);
+    assert.match(objectView, /className = 'object-status'/);
     assert.match(html, /function showWorkingState\(card, visual, workId\)/);
     assert.match(html, /function clearWorkingState\(card\)/);
     assert.doesNotMatch(html, /function renderWorkingVisual[\s\S]{0,500}querySelector\('\.plot'\)\.replaceChildren/);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("serves frameless visual and annotation canvas objects", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "frameless", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    const objectView = await fetch(`http://127.0.0.1:${server.port}/assets/canvas-object-view.js`);
+    const annotations = await fetch(`http://127.0.0.1:${server.port}/assets/annotation-renderer.js`);
+    assert.equal(objectView.status, 200);
+    assert.equal(annotations.status, 200);
+    const objectViewSource = await objectView.text();
+    assert.match(objectViewSource, /className = 'canvas-object'/);
+    assert.match(objectViewSource, /className = 'object-content'/);
+    assert.match(objectViewSource, /className = 'object-status'/);
+    assert.match(objectViewSource, /dataset\.kind/);
+    assert.doesNotMatch(html, /\.canvas-object\s*\{[^}]*border:\s*1px/);
+    assert.doesNotMatch(html, /className = 'visual-card'/);
   } finally { await server.close(); runtime.close(); }
 });
 

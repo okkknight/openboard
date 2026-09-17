@@ -27,23 +27,26 @@
     main.details-hidden { grid-template-columns: minmax(0, 1fr); }
     #viewport { position: relative; overflow: auto; background: radial-gradient(circle at 1px 1px, #202b38 1px, transparent 0) 0 0 / 24px 24px; }
     #board { position: relative; min-width: 1200px; min-height: 900px; transform-origin: 0 0; }
-    .visual-card { position: absolute; overflow: hidden; min-width: 260px; min-height: 180px; border: 1px solid var(--line); border-radius: 12px; background: rgba(21,27,36,.97); box-shadow: 0 14px 30px rgba(0,0,0,.22); transition: border-color .15s, box-shadow .15s; }
-    .visual-card.is-focused { border-color: var(--focus); box-shadow: 0 0 0 2px rgba(246,200,110,.24), 0 14px 30px rgba(0,0,0,.28); }
-    .visual-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 12px; border-bottom: 1px solid var(--line); }
-    .visual-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
-    .visual-id { margin-left: auto; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace; }
-    .visual-body { position: relative; height: calc(100% - 38px); min-height: 140px; }
+    .canvas-object { position: absolute; overflow: visible; min-width: 80px; min-height: 48px; background: transparent; border: 0; border-radius: 0; box-shadow: none; color: inherit; }
+    .canvas-object:focus-visible { outline: 2px solid #8aa6ff; outline-offset: 4px; }
+    .canvas-object.is-focused::after { content: ""; position: absolute; inset: -4px; border: 1px solid rgba(138,166,255,.55); pointer-events: none; }
+    .object-title { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 2px; overflow: hidden; }
+    .object-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+    .object-grab { width: 14px; opacity: 0; color: var(--muted); }
+    .object-grab::before { content: "⠿"; }
+    .canvas-object:hover .object-grab, .canvas-object.is-focused .object-grab { opacity: .75; }
+    .object-content { position: relative; height: calc(100% - 30px); min-height: 18px; }
     .plot { display: grid; place-items: center; width: 100%; height: 100%; min-height: 140px; padding: 8px; }
     .plot svg { max-width: 100%; height: auto; }
     .plot table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .plot th, .plot td { padding: 5px 7px; border-bottom: 1px solid var(--line); text-align: left; }
     .plot th { color: var(--muted); font-weight: 600; }
     .kpi-value { font-size: 38px; font-weight: 700; color: var(--accent); }
-    .working-overlay { position: absolute; inset: 8px; z-index: 2; display: grid; align-items: stretch; pointer-events: none; border: 1px solid rgba(107,216,196,.25); border-radius: 8px; background: rgba(21,27,36,.94); box-shadow: 0 8px 22px rgba(0,0,0,.18); }
-    .working-overlay[hidden] { display: none; }
-    .working-overlay.has-rendered-content { inset: auto 12px 12px 12px; background: rgba(21,27,36,.9); backdrop-filter: blur(6px); }
+    .object-status { position: absolute; left: 2px; bottom: -22px; z-index: 2; pointer-events: none; color: var(--accent); font-size: 12px; }
+    .object-status[hidden] { display: none; }
+    .object-status.has-rendered-content { bottom: -22px; }
     .working-frame { align-self: stretch; min-height: 118px; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 14px; color: var(--muted); border-left: 2px solid var(--accent); }
-    .working-overlay.has-rendered-content .working-frame { min-height: 0; padding: 8px 10px; }
+    .object-status.has-rendered-content .working-frame { min-height: 0; padding: 0; }
     .working-frame strong { color: var(--text); font-size: 13px; font-weight: 600; }
     .visual-error { margin: 22px; color: #f39a9f; }
     aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px; }
@@ -51,8 +54,17 @@
     .details-heading h1 { margin: 0; font-size: 14px; }
     .details-heading button { padding: 4px 8px; font-size: 12px; }
     aside p { margin: 0 0 18px; color: var(--muted); }
-    .annotation { padding: 10px 0; border-top: 1px solid var(--line); }
-    .annotation strong { display: block; color: var(--focus); font-size: 12px; margin-bottom: 3px; }
+    .canvas-object[data-kind="annotation"] .object-title { height: 24px; font-size: 12px; color: var(--muted); }
+    .canvas-object[data-kind="annotation"] .object-content { height: calc(100% - 24px); }
+    .annotation-text { width: 100%; height: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .annotation-caption { font-size: 13px; color: var(--muted); }
+    .annotation-body { font-size: 17px; line-height: 1.5; }
+    .annotation-insight { font: 32px/1.15 ui-serif, Georgia, serif; }
+    .annotation-callout { font: 24px/1.25 ui-serif, Georgia, serif; color: var(--focus); }
+    .align-center { text-align: center; } .align-end { text-align: right; }
+    .color-muted { color: var(--muted); } .color-accent { color: var(--accent); } .color-warning { color: var(--focus); }
+    #connector-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+    #connector-layer line { stroke: rgba(154,168,186,.55); stroke-width: 1; }
     #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
     #empty[hidden] { display: none; }
   </style>
@@ -76,6 +88,8 @@
     import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '__OPENBOARD_BASE_PATH__/assets/render-reconciler.js';
     import { createRenderMotion } from '__OPENBOARD_BASE_PATH__/assets/render-motion.js?v=lc2-20260916';
     import { crossMarkTransition } from '__OPENBOARD_BASE_PATH__/assets/cross-mark-transition.js';
+    import { createCanvasObjectView } from '__OPENBOARD_BASE_PATH__/assets/canvas-object-view.js';
+    import { fallbackAnnotationLayout, renderAnnotationContent, renderConnectors } from '__OPENBOARD_BASE_PATH__/assets/annotation-renderer.js';
     const basePath = '__OPENBOARD_BASE_PATH__';
     const appPath = (path) => `${basePath}${path}`;
     const board = document.querySelector('#board');
@@ -102,6 +116,8 @@
     let lastConstructionTrail = null;
     const renderIdentity = createRenderIdentityRegistry();
     const renderGenerations = createRenderGenerationTracker();
+    const connectorLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); connectorLayer.id = 'connector-layer'; board.append(connectorLayer);
+    const objectView = createCanvasObjectView({ board, renderAnnotation: renderAnnotationContent });
 
     const setConnection = (text, connected) => { connection.textContent = text; connection.classList.toggle('connected', connected); };
     const setDetailsVisible = (visible) => {
@@ -110,7 +126,7 @@
       toggleDetails.setAttribute('aria-expanded', String(visible));
       showDetails.hidden = visible;
     };
-    const cardFor = (id) => board.querySelector(`[data-visual="${CSS.escape(id)}"]`);
+    const cardFor = (id) => objectView.elementFor('visual', id);
     const applyLayout = (card, layout, animate = false) => {
       const before = animate && !motionReduced() ? card.getBoundingClientRect() : null;
       card.style.left = `${layout.x}px`; card.style.top = `${layout.y}px`; card.style.width = `${layout.w}px`; card.style.height = `${layout.h}px`;
@@ -129,14 +145,14 @@
     async function removeCard(card) {
       if (!card) return;
       if (!motionReduced()) await card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-8px) scale(.98)' }], { duration: 160, easing: 'ease-in', fill: 'both' }).finished.catch(() => {});
-      card.remove();
+      objectView.remove(card.dataset.kind, card.dataset.objectId);
     }
     function revealNewVisual(card) {
       if (!card?.isConnected) return;
       requestAnimationFrame(() => { if (card.isConnected) card.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' }); });
     }
     function fitView() {
-      const cards = [...board.querySelectorAll('.visual-card')];
+      const cards = [...board.querySelectorAll('.canvas-object')];
       if (!cards.length) return;
       const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width)));
       const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height)));
@@ -348,17 +364,10 @@
       let createdCard = false;
       if (!card) {
         createdCard = true;
-        card = document.createElement('article'); card.className = 'visual-card'; card.dataset.visual = id;
-        const head = document.createElement('div'); head.className = 'visual-head';
-        const title = document.createElement('span'); title.className = 'visual-title';
-        const visualId = document.createElement('span'); visualId.className = 'visual-id'; visualId.textContent = id;
-        const body = Object.assign(document.createElement('div'), { className: 'visual-body' });
-        const plot = Object.assign(document.createElement('div'), { className: 'plot' });
-        const workingOverlay = Object.assign(document.createElement('div'), { className: 'working-overlay', hidden: true });
-        body.append(plot, workingOverlay); head.append(title, visualId); card.append(head, body); board.append(card);
+        card = objectView.ensure('visual', visual);
         animateCardBirth(card, visual.derived_from ? cardFor(visual.derived_from) : undefined);
       }
-      card.querySelector('.visual-title').textContent = visual.title || id;
+      objectView.ensure('visual', visual);
       applyLayout(card, visualLayout(visual));
       if (createdCard) revealNewVisual(card);
       return card;
@@ -376,14 +385,14 @@
 
     function showWorkingState(card, visual, workId) {
       const plot = card.querySelector('.plot');
-      const overlay = card.querySelector('.working-overlay');
+      const overlay = card.querySelector('.object-status');
       overlay.classList.toggle('has-rendered-content', plot.childElementCount > 0);
       overlay.replaceChildren(workingFrame(visual, workId));
       overlay.hidden = false;
     }
 
     function clearWorkingState(card) {
-      const overlay = card.querySelector('.working-overlay');
+      const overlay = card.querySelector('.object-status');
       overlay.hidden = true;
       overlay.classList.remove('has-rendered-content');
       overlay.replaceChildren();
@@ -395,7 +404,7 @@
       const card = ensureVisualCard(visual);
       showWorkingState(card, visual, workId);
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
-      empty.hidden = false;
+      empty.hidden = true;
     }
 
     async function render(id, workId = workForVisual(id), artifactGeneration) {
@@ -439,32 +448,35 @@
           });
         }
         if (payload.status !== 'working') clearWorkingState(card);
-      } catch (error) { clearWorkingState(card); plot.replaceChildren(Object.assign(document.createElement('p'), { className: 'visual-error', textContent: error.message })); }
+      } catch (error) { const status = card.querySelector('.object-status'); status.textContent = error.message; status.hidden = false; status.classList.add('is-error'); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
-      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+      empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
     }
 
     function updateScene(next, animateLayout = false) {
       scene = next; revision.textContent = `Revision ${durableScene.revision}`;
       canvasMeta.textContent = `${Object.keys(scene.visuals).length} visual${Object.keys(scene.visuals).length === 1 ? '' : 's'} · ${Object.keys(scene.datasets).length} dataset${Object.keys(scene.datasets).length === 1 ? '' : 's'}`;
-      annotations.replaceChildren(...Object.values(scene.annotations).map((annotation) => { const item = document.createElement('div'); item.className = 'annotation'; item.innerHTML = '<strong>Note</strong>'; item.append(document.createTextNode(annotation.text)); return item; }));
-      for (const card of board.querySelectorAll('.visual-card')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual), animateLayout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
+      annotations.replaceChildren();
+      objectView.sync(scene);
+      Object.values(scene.annotations).forEach((annotation, index) => applyLayout(objectView.elementFor('annotation', annotation.id), fallbackAnnotationLayout(annotation, Object.fromEntries(Object.entries(scene.visuals).map(([id, visual]) => [id, visualLayout(visual)])), index), animateLayout));
+      for (const card of board.querySelectorAll('.canvas-object[data-kind="visual"]')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual), animateLayout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
+      renderConnectors(connectorLayer, scene.annotations, scene.visuals, (kind, id) => objectView.layoutFor(kind, id));
     }
 
     async function renderEffectiveScene() {
-      const existingIds = new Set([...board.querySelectorAll('.visual-card')].map((card) => card.dataset.visual));
+      const existingIds = new Set([...board.querySelectorAll('.canvas-object[data-kind="visual"]')].map((card) => card.dataset.visual));
       updateScene(mergeEffectiveScene());
-      for (const card of board.querySelectorAll('.visual-card')) if (!scene.visuals[card.dataset.visual]) card.remove();
+      for (const card of board.querySelectorAll('.canvas-object[data-kind="visual"]')) if (!scene.visuals[card.dataset.visual]) card.remove();
       await Promise.all(Object.keys(scene.visuals).map((id) => render(id)));
       if (Object.keys(scene.visuals).some((id) => !existingIds.has(id))) fitView();
-      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+      empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
     }
     async function renderAffectedVisuals(ids, workId, artifactGeneration) {
       for (const id of [...new Set(ids)]) {
         if (scene.visuals[id]) await render(id, workId, artifactGeneration);
         else await removeCard(cardFor(id));
       }
-      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+      empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
     }
     async function applyWorkEvent(event) {
       if (!acceptWorkEvent(lastSequence, event)) return;
@@ -533,7 +545,7 @@
             await removeCard(cardFor(event.visual_id));
             durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
             updateScene(mergeEffectiveScene());
-            empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+            empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
             return;
           }
           else if (event.visual_id) await render(event.visual_id);
