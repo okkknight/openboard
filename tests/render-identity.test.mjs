@@ -153,6 +153,7 @@ test("exposes a versioned render artifact identity contract to browser callers",
       visual_id: "orders-by-channel",
       generation: 0,
       revision: 1,
+      stream_state: "complete",
       identity: rendered.result.plot.identity
     });
   } finally {

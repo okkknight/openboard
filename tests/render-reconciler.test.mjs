@@ -24,6 +24,19 @@ test("plans keyed enter update exit operations without using array position", ()
   ]);
 });
 
+test("does not exit retained keys while a streamed artifact is still partial", () => {
+  const operations = planRenderOperations(
+    { axes_version: 1, layers: [layer(["A", "B", "C", "D"])] },
+    { axes_version: 2, layers: [layer(["C"])] },
+    { streamState: "partial" }
+  );
+
+  assert.deepEqual(operations, [
+    { type: "replace-axes" },
+    { type: "update", mark_id: "bars", key: "C" }
+  ]);
+});
+
 test("uses explicit layer replacement when identity is nonretainable", () => {
   assert.deepEqual(planRenderOperations(
     { axes_version: 1, layers: [layer(["A"], "nonretainable")] },

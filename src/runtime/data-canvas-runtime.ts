@@ -18,13 +18,14 @@ export interface RuntimeResult {
 }
 
 interface RenderPayload { rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation; }
-interface RenderArtifact { visual: VisualSpec; revision: number; payload: RenderPayload; generation: number; cache_generation: number; }
+interface RenderArtifact { visual: VisualSpec; revision: number; payload: RenderPayload; generation: number; cache_generation: number; stream_state: "partial" | "complete"; }
 
 export interface RenderArtifactV2 {
   artifact_version: 2;
   visual_id: string;
   generation: number;
   revision: number;
+  stream_state: "partial" | "complete";
   work_id?: string;
   identity: RenderIdentityContract;
 }
@@ -234,7 +235,7 @@ export class DataCanvasRuntime {
     const promise = (async () => {
       if (workId) return this.#withActivity(workId, "render", `Streaming ${visual.id}`, () => this.#renderStream(key, visual, revision, workId), visual.id);
       const payload = await this.#render(visual);
-      const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: generation };
+      const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: generation, stream_state: "complete" as const };
       this.#storeArtifact(key, artifact);
       return artifact;
     })();
@@ -291,7 +292,7 @@ export class DataCanvasRuntime {
       columns = chunk.columns;
       rows.push(...chunk.rows);
       assertRenderable(rows.length, this.#pointLimit, visual.query.sample);
-      artifact = this.#streamArtifact(key, visual, revision, rows, columns);
+      artifact = this.#streamArtifact(key, visual, revision, rows, columns, "partial");
       const changed = this.#works.next(workId);
       this.#emitWork("work.render.chunk", changed, visual.id, undefined, undefined, {
         artifact_generation: artifact.generation,
@@ -302,15 +303,14 @@ export class DataCanvasRuntime {
       // request its immutable artifact before DuckDB advances to the next chunk.
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    if (!artifact) artifact = this.#streamArtifact(key, visual, revision, rows, columns);
-    return artifact;
+    return this.#streamArtifact(key, visual, revision, rows, columns, "complete");
   }
 
-  #streamArtifact(key: string, visual: VisualSpec, revision: number, rows: JsonObject[], columns: string[]): RenderArtifact {
+  #streamArtifact(key: string, visual: VisualSpec, revision: number, rows: JsonObject[], columns: string[], streamState: RenderArtifact["stream_state"]): RenderArtifact {
     const numericFields = (visual.query.measures ?? []).map((measure) => measure.alias);
     const categoryFields = (visual.query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
     const payload = { rows: structuredClone(rows), columns: structuredClone(columns), plot: compilePlot(visual, rows), observation: observe(rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
-    const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: this.#artifactGenerations.get(key) ?? 0 };
+    const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: this.#artifactGenerations.get(key) ?? 0, stream_state: streamState };
     this.#storeArtifact(key, artifact);
     return artifact;
   }
@@ -340,12 +340,13 @@ export class DataCanvasRuntime {
     if (expectedRevision !== undefined && expectedRevision !== currentRevision) throw new RevisionConflictError(expectedRevision, currentRevision);
   }
   #response(artifact: RenderArtifact, workId?: string): RuntimeResult {
-    const { visual, revision, payload, generation } = artifact;
+    const { visual, revision, payload, generation, stream_state } = artifact;
     const artifactV2: RenderArtifactV2 = {
       artifact_version: 2,
       visual_id: visual.id,
       generation,
       revision,
+      stream_state,
       ...(workId ? { work_id: workId } : {}),
       identity: payload.plot.identity ?? { visual_key: `visual:${visual.id}`, marks: [] }
     };
@@ -353,7 +354,7 @@ export class DataCanvasRuntime {
   }
   #workingResponse(visual: WorkingVisual, revision: number): RuntimeResult {
     const identity = { visual_key: `visual:${visual.id}`, marks: [] };
-    return { status: "working", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: 0, columns: [], plot: { data: [], marks: [], identity }, artifact: { artifact_version: 2, visual_id: visual.id, generation: 0, revision, identity } }, observation: emptyObservation() };
+    return { status: "working", canvas_id: this.#store.inspect().canvas_id, revision, result: { visual, rows: 0, columns: [], plot: { data: [], marks: [], identity }, artifact: { artifact_version: 2, visual_id: visual.id, generation: 0, revision, stream_state: "partial", identity } }, observation: emptyObservation() };
   }
   #workResult(work: WorkSession): { status: "ok"; canvas_id: string; revision: number; result: { work_id: string; base_revision: number; sequence: number } } {
     return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision, result: { work_id: work.id, base_revision: work.base_revision, sequence: work.sequence } };

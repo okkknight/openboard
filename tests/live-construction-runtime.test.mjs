@@ -250,11 +250,14 @@ test("publishes a renderable work artifact for each real DuckDB stream chunk", a
   const chunk = events.find((event) => event.type === "work.render.chunk");
   const partial = await runtime.renderVisual("channel-orders", work.result.work_id, chunk.payload.artifact_generation);
   assert.equal(partial.result.rows, 1);
+  assert.equal(partial.result.artifact.stream_state, "partial");
   assert.equal(events.some((event) => event.type === "work.activity" && event.activity?.status === "completed"), false);
 
   gate.release();
   const completed = await creating;
   assert.equal(completed.result.rows, 2);
+  assert.equal(completed.result.artifact.stream_state, "complete");
+  assert.ok(completed.result.artifact.generation > partial.result.artifact.generation);
   assert.equal(events.filter((event) => event.type === "work.render.chunk").length, 2);
   runtime.close();
 });

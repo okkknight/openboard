@@ -27,8 +27,9 @@ export function createRenderGenerationTracker() {
   };
 }
 
-export function planRenderOperations(current, next) {
+export function planRenderOperations(current, next, { streamState = 'complete' } = {}) {
   const operations = [];
+  const allowExit = streamState === 'complete';
   if (current.axes_version !== next.axes_version) operations.push({ type: 'replace-axes' });
   const currentByMark = byMark(current.layers);
   const nextByMark = byMark(next.layers);
@@ -39,9 +40,9 @@ export function planRenderOperations(current, next) {
     if (!before || !after || before.mark_type === 'arc' || after.mark_type === 'arc' || before.identity_mode === 'nonretainable' || after.identity_mode === 'nonretainable' || before.identity_mode !== after.identity_mode || before.mark_type !== after.mark_type) {
       if (!before && after?.identity_mode !== 'nonretainable') {
         for (const node of after.nodes ?? []) operations.push({ type: 'enter', mark_id: markId, key: node.key });
-      } else if (before && !after && before.identity_mode !== 'nonretainable') {
+      } else if (before && !after && before.identity_mode !== 'nonretainable' && allowExit) {
         for (const node of before.nodes ?? []) operations.push({ type: 'exit', mark_id: markId, key: node.key });
-      } else operations.push({ type: 'replace-layer', mark_id: markId });
+      } else if (after || allowExit) operations.push({ type: 'replace-layer', mark_id: markId });
       continue;
     }
 
@@ -50,7 +51,7 @@ export function planRenderOperations(current, next) {
     for (const node of after.nodes ?? []) {
       if (beforeByKey.has(node.key)) operations.push({ type: 'update', mark_id: markId, key: node.key });
     }
-    for (const node of before.nodes ?? []) if (!afterByKey.has(node.key)) operations.push({ type: 'exit', mark_id: markId, key: node.key });
+    if (allowExit) for (const node of before.nodes ?? []) if (!afterByKey.has(node.key)) operations.push({ type: 'exit', mark_id: markId, key: node.key });
     for (const node of after.nodes ?? []) if (!beforeByKey.has(node.key)) operations.push({ type: 'enter', mark_id: markId, key: node.key });
   }
   return operations;
@@ -182,7 +183,11 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
     }))
     .filter(Boolean);
   const nextLayers = [...nextMarks.children].map((layer) => layerModel(layer, descriptors.get(layer.dataset.markId))).filter(Boolean);
-  const operations = planRenderOperations({ axes_version: axesVersion(currentAxes), layers: currentLayers }, { axes_version: axesVersion(nextAxes), layers: nextLayers });
+  const operations = planRenderOperations(
+    { axes_version: axesVersion(currentAxes), layers: currentLayers },
+    { axes_version: axesVersion(nextAxes), layers: nextLayers },
+    { streamState: artifact.stream_state }
+  );
   const currentByMark = new Map([...currentMarks.children].map((layer) => [layer.dataset.markId, layer]));
   const nextByMark = new Map([...nextMarks.children].map((layer) => [layer.dataset.markId, layer]));
 

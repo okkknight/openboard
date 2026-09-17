@@ -216,6 +216,19 @@ test("handles live work events by rendering only affected cards", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("keeps working status in a separate overlay from the retained render surface", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "working-overlay", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /className: 'visual-body'/);
+    assert.match(html, /className: 'working-overlay'/);
+    assert.match(html, /function showWorkingState\(card, visual, workId\)/);
+    assert.match(html, /function clearWorkingState\(card\)/);
+    assert.doesNotMatch(html, /function renderWorkingVisual[\s\S]{0,500}querySelector\('\.plot'\)\.replaceChildren/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("uses retained card birth and exit paths instead of reloading every visual", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "spatial-life", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
