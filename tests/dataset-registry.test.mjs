@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatasetRegistry } from "../dist/data/dataset-registry.js";
+import { DatasetRegistry, validateDatasetsInsideRoot } from "../dist/data/dataset-registry.js";
 import { DuckDbEngine } from "../dist/data/duckdb-engine.js";
 
 test("discovers only CSV and Parquet files with stable relative-path IDs", async () => {
@@ -26,5 +26,21 @@ test("discovers only CSV and Parquet files with stable relative-path IDs", async
     engine.close();
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects restored dataset paths outside the configured data root", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openboard-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "openboard-outside-"));
+  try {
+    await writeFile(join(root, "inside.csv"), "channel\nA\n");
+    await writeFile(join(outside, "outside.csv"), "channel\nB\n");
+    await assert.rejects(
+      () => validateDatasetsInsideRoot(root, { outside: { id: "outside", path: join(outside, "outside.csv"), format: "csv" } }),
+      /dataset_path_outside_root/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });

@@ -21,6 +21,14 @@ export function motionStrategy(operation, markType) {
   return { family, action };
 }
 
+export function motionFrames(operation, markType, preservesSvgTransform = false) {
+  const strategy = motionStrategy(operation, markType);
+  if (preservesSvgTransform) return operation === 'enter' ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }];
+  return operation === 'enter'
+    ? [{ opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(5px)' }, { opacity: 1, transform: 'none' }]
+    : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(-4px)' }];
+}
+
 export function captureGeometry(element) {
   return Object.fromEntries(NUMERIC_ATTRIBUTES.map((name) => [name, element.getAttribute(name)]).filter(([, value]) => value !== null));
 }
@@ -81,13 +89,14 @@ export function createRenderMotion({ reduced = () => false } = {}) {
         else await waitForAnimation(element, [{ opacity: 0.55 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }, active, register);
         return;
       }
-      const frames = operation.type === 'enter'
-        ? [{ opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(5px)' }, { opacity: 1, transform: 'none' }]
-        : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(-4px)' }];
-      element.style.transformBox = 'fill-box';
-      element.style.transformOrigin = strategy.family === 'bar' || strategy.family === 'area' ? 'center bottom' : 'center';
+      const preservesSvgTransform = element instanceof SVGElement && element.hasAttribute('transform');
+      const frames = motionFrames(operation.type, markType, preservesSvgTransform);
+      if (!preservesSvgTransform) {
+        element.style.transformBox = 'fill-box';
+        element.style.transformOrigin = strategy.family === 'bar' || strategy.family === 'area' ? 'center bottom' : 'center';
+      }
       await waitForAnimation(element, frames, { duration: 220, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both' }, active, register);
-      element.style.transform = '';
+      if (!preservesSvgTransform) element.style.transform = '';
       element.style.opacity = '';
     }
   };

@@ -13,6 +13,18 @@ function isInside(root: string, candidate: string): boolean {
   return path !== "" && !path.startsWith(`..${sep}`) && path !== "..";
 }
 
+/** Re-resolves persisted dataset paths before a restored scene may use them. */
+export async function validateDatasetsInsideRoot(root: string, datasets: Record<string, DatasetSpec>): Promise<Record<string, DatasetSpec>> {
+  const resolvedRoot = await realpath(root);
+  const validated: Record<string, DatasetSpec> = {};
+  for (const [id, dataset] of Object.entries(datasets)) {
+    const resolvedPath = await realpath(dataset.path);
+    if (!isInside(resolvedRoot, resolvedPath)) throw new Error(`dataset_path_outside_root: ${dataset.path}`);
+    validated[id] = { ...dataset, path: resolvedPath };
+  }
+  return validated;
+}
+
 export class DatasetRegistry {
   async discover(root: string): Promise<DatasetSpec[]> {
     const resolvedRoot = await realpath(root);

@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenBoard Data Canvas (user service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/openboard
+Environment=NODE_ENV=production
+Environment=OPENBOARD_PORT=4324
+EnvironmentFile=-%h/.config/openboard/openboard.env
+ExecStart=/usr/bin/node %h/openboard/dist/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

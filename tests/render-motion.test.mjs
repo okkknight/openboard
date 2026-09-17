@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { motionStrategy } from "../web/render-motion.js";
+import { motionFrames, motionStrategy } from "../web/render-motion.js";
 
 test("maps render operations to explicit mark-family motion strategies", () => {
   assert.deepEqual(motionStrategy("enter", "barY"), { family: "bar", action: "baseline-enter" });
@@ -12,4 +12,9 @@ test("maps render operations to explicit mark-family motion strategies", () => {
 
 test("uses a deterministic fade fallback for unsupported mark families", () => {
   assert.deepEqual(motionStrategy("exit", "unknown"), { family: "fallback", action: "fade-exit" });
+});
+
+test("does not override an SVG transform attribute while an arc enters", () => {
+  assert.deepEqual(motionFrames("enter", "arc", true), [{ opacity: 0 }, { opacity: 1 }]);
+  assert.deepEqual(motionFrames("enter", "arc", false), [{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "none" }]);
 });

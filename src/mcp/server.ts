@@ -15,7 +15,7 @@ function textResult(value: unknown) {
 
 function placementLayout(runtime: DataCanvasRuntime, placement: "auto" | "right" | "left" | "below" | "above", anchorId?: string) {
   const visuals = Object.values(runtime.inspect().visuals);
-  const size = { w: 480, h: 320 };
+  const size = { w: 720, h: 440 };
   if (!visuals.length) return { x: 0, y: 0, ...size };
   const anchor = (anchorId ? runtime.inspect().visuals[anchorId]?.layout : undefined) ?? visuals.at(-1)!.layout;
   if (placement === "left") return { x: anchor.x - size.w - 24, y: anchor.y, ...size };
@@ -68,16 +68,12 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
           return textResult({ status: "ok", canvas_id: scene.canvas_id, revision: scene.revision, result });
         }
         if (name === "visual.create") {
-          const workId = request.work_id as string | undefined;
-          const id = String(request.id ?? `v${Object.keys(runtime.inspect().visuals).length + 1}`);
-          if (workId) {
-            const draft: WorkingVisualDraft = { id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined, source: request.source as string | undefined, query: request.query as QuerySpec | undefined, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"] | undefined, layout: request.layout as VisualSpec["layout"] | undefined };
-            return textResult(await runtime.visualCreate(draft, request.expected_revision as number | undefined, workId));
-          }
-          const visual: VisualSpec = { id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined, source: String(request.source), query: request.query as QuerySpec, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"], layout: request.layout as VisualSpec["layout"] ?? placementLayout(runtime, request.placement as "auto" | "right" | "left" | "below" | "above") };
-          return textResult(await runtime.visualCreate(visual, request.expected_revision as number | undefined));
+          const workId = request.work_id as string;
+          const id = String(request.id);
+          const draft: WorkingVisualDraft = { id, kind: request.kind as VisualSpec["kind"], title: request.title as string | undefined, source: request.source as string | undefined, query: request.query as QuerySpec | undefined, coordinate: request.coordinate as VisualSpec["coordinate"], marks: request.marks as VisualSpec["marks"] | undefined, layout: request.layout as VisualSpec["layout"] ?? placementLayout(runtime, request.placement as "auto" | "right" | "left" | "below" | "above") };
+          return textResult(await runtime.visualCreate(draft, request.expected_revision as number | undefined, workId));
         }
-        if (name === "visual.patch") return textResult(await runtime.visualPatch(String(request.id), request.patch as VisualPatch, request.expected_revision as number | undefined, request.work_id as string | undefined));
+        if (name === "visual.patch") return textResult(await runtime.visualPatch(String(request.id), request.patch as VisualPatch, request.expected_revision as number | undefined, request.work_id as string));
         if (name === "visual.clone") {
           const source = runtime.inspect().visuals[String(request.id)];
           const newId = String(request.new_id ?? `${request.id}-copy`);
@@ -86,7 +82,7 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
           const placedPatch = source && placement !== "auto" && !(patch?.set && "layout" in patch.set)
             ? { ...patch, set: { ...(patch?.set ?? {}), layout: placementLayout(runtime, placement, String(request.id)) } }
             : patch;
-          return textResult(await runtime.visualClone(String(request.id), newId, placedPatch, request.expected_revision as number | undefined, request.work_id as string | undefined));
+          return textResult(await runtime.visualClone(String(request.id), newId, placedPatch, request.expected_revision as number | undefined, request.work_id as string));
         }
         if (name === "canvas.compose") return textResult(await runtime.canvasCompose(request as unknown as ComposeInput, request.expected_revision as number | undefined, request.work_id as string | undefined));
         if (name === "canvas.annotate") {

@@ -54,6 +54,7 @@
       "purpose": "Create one persistent visual object from a dataset, query, layered marks and placement.",
       "input": {
         "type": "object",
+        "required": ["id", "work_id"],
         "properties": {
           "id": { "type": "string" },
           "kind": { "enum": ["plot", "table", "kpi"], "default": "plot" },
@@ -67,12 +68,7 @@
           "expected_revision": { "type": "integer", "minimum": 0 },
           "work_id": { "type": "string", "minLength": 1 }
         },
-        "additionalProperties": false,
-        "allOf": [{
-          "if": { "required": ["work_id"] },
-          "then": { "required": ["id"] },
-          "else": { "required": ["source", "query", "marks"] }
-        }]
+        "additionalProperties": false
       }
     },
     {
@@ -80,7 +76,7 @@
       "purpose": "Mutate an existing visual in place; the default response to a request that changes the current view.",
       "input": {
         "type": "object",
-        "required": ["id", "patch"],
+        "required": ["id", "patch", "work_id"],
         "properties": {
           "id": { "type": "string" },
           "patch": {
@@ -104,7 +100,7 @@
       "purpose": "Clone a visual to preserve a comparison/branch, optionally applying a patch and relative placement.",
       "input": {
         "type": "object",
-        "required": ["id"],
+        "required": ["id", "work_id"],
         "properties": {
           "id": { "type": "string" },
           "new_id": { "type": "string" },

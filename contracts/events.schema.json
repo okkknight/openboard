@@ -19,6 +19,7 @@
         "work.started",
         "work.activity",
         "work.visual.changed",
+        "work.render.chunk",
         "work.completed",
         "work.cancelled",
         "work.failed",
@@ -52,7 +53,7 @@
   "allOf": [{
     "if": {
       "properties": {
-        "type": { "enum": ["work.started", "work.activity", "work.visual.changed", "work.completed", "work.cancelled", "work.failed", "work.snapshot"] }
+        "type": { "enum": ["work.started", "work.activity", "work.visual.changed", "work.render.chunk", "work.completed", "work.cancelled", "work.failed", "work.snapshot"] }
       },
       "required": ["type"]
     },

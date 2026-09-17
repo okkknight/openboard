@@ -1,4 +1,5 @@
 import type { AnnotationSpec, CanvasState, ComposeInput, EffectiveScene, Scene, VisualPatch, WorkingOverlay, WorkingVisual, WorkingVisualDraft, WorkSession, WorkStatus } from "../core/types.js";
+import { assertValidVisualPatchPath } from "../core/scene-store.js";
 
 function clone<T>(value: T): T { return structuredClone(value); }
 
@@ -37,6 +38,7 @@ function unsetPath(target: Record<string, unknown>, path: string): void {
 }
 
 function setVisualPath(target: Record<string, unknown>, path: string, value: unknown): void {
+  assertValidVisualPatchPath(path);
   const markPath = /^marks\.([^\.]+)(?:\.(.*))?$/.exec(path);
   if (markPath && Array.isArray(target.marks)) {
     const mark = target.marks.find((candidate) => candidate && typeof candidate === "object" && String((candidate as { id?: unknown }).id) === markPath[1]);
@@ -49,6 +51,7 @@ function setVisualPath(target: Record<string, unknown>, path: string, value: unk
 }
 
 function unsetVisualPath(target: Record<string, unknown>, path: string): void {
+  assertValidVisualPatchPath(path);
   const markPath = /^marks\.([^\.]+)(?:\.(.*))?$/.exec(path);
   if (markPath && Array.isArray(target.marks)) {
     const mark = target.marks.find((candidate) => candidate && typeof candidate === "object" && String((candidate as { id?: unknown }).id) === markPath[1]);
@@ -115,10 +118,10 @@ export class WorkSessionStore {
     return clone(work);
   }
 
-  createDraft(workId: string, draft: WorkingVisualDraft): WorkSession {
+  createDraft(workId: string, draft: WorkingVisualDraft, durable: Scene): WorkSession {
     const work = this.#require(workId); assertActive(work);
     if (!draft.id) throw new Error("invalid_work_draft: id");
-    if (work.overlay.visuals[draft.id]) throw new Error(`already_exists: visual ${draft.id}`);
+    if (this.effectiveScene(workId, durable).visuals[draft.id]) throw new Error(`already_exists: visual ${draft.id}`);
     work.overlay.visuals[draft.id] = clone(draft);
     work.overlay.removed_visual_ids = work.overlay.removed_visual_ids.filter((id) => id !== draft.id);
     work.overlay.operations += 1;
@@ -154,8 +157,11 @@ export class WorkSessionStore {
     return clone(work);
   }
 
-  annotate(workId: string, annotation: AnnotationSpec): WorkSession {
+  annotate(workId: string, annotation: AnnotationSpec, durable: Scene): WorkSession {
     const work = this.#require(workId); assertActive(work);
+    const effective = this.effectiveScene(workId, durable);
+    if (effective.annotations[annotation.id]) throw new Error(`already_exists: annotation ${annotation.id}`);
+    if (annotation.target && !effective.visuals[annotation.target]) throw new Error(`not_found: visual ${annotation.target}`);
     work.overlay.annotations[annotation.id] = clone(annotation);
     work.overlay.removed_annotation_ids = work.overlay.removed_annotation_ids.filter((id) => id !== annotation.id);
     work.overlay.operations += 1;
@@ -220,7 +226,11 @@ export class WorkSessionStore {
     const visuals: Scene["visuals"] = {};
     for (const [id, visual] of Object.entries(effective.visuals)) {
       assertCompleteVisual(id, visual);
+      if (visual.id !== id) throw new Error(`invalid_work_draft: visual id ${visual.id} does not match ${id}`);
       visuals[id] = clone(visual);
+    }
+    for (const annotation of Object.values(effective.annotations)) {
+      if (annotation.target && !visuals[annotation.target]) throw new Error(`not_found: visual ${annotation.target}`);
     }
     return { canvas_id: effective.canvas_id, revision: durable.revision, datasets: clone(effective.datasets), visuals, annotations: clone(effective.annotations), canvas: clone(effective.canvas) };
   }

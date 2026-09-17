@@ -36,7 +36,7 @@ export function planRenderOperations(current, next) {
   for (const markId of orderedMarkIds(current, next)) {
     const before = currentByMark.get(markId);
     const after = nextByMark.get(markId);
-    if (!before || !after || before.identity_mode === 'nonretainable' || after.identity_mode === 'nonretainable' || before.identity_mode !== after.identity_mode || before.mark_type !== after.mark_type) {
+    if (!before || !after || before.mark_type === 'arc' || after.mark_type === 'arc' || before.identity_mode === 'nonretainable' || after.identity_mode === 'nonretainable' || before.identity_mode !== after.identity_mode || before.mark_type !== after.mark_type) {
       if (!before && after?.identity_mode !== 'nonretainable') {
         for (const node of after.nodes ?? []) operations.push({ type: 'enter', mark_id: markId, key: node.key });
       } else if (before && !after && before.identity_mode !== 'nonretainable') {
@@ -196,6 +196,15 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
     const nextLayer = nextByMark.get(operation.mark_id);
     if (operation.type === 'replace-layer') {
       const markType = nextLayer?.dataset.markType ?? currentLayer?.dataset.markType;
+      if (markType === 'arc' && currentLayer?.dataset.renderer === 'primitive' && nextLayer) {
+        const replacement = nextLayer.cloneNode(true);
+        currentLayer.replaceWith(replacement);
+        for (const node of layerNodes(replacement)) {
+          const enter = { type: 'enter', mark_id: operation.mark_id, key: node.key };
+          void onEnter(node.element, enter, { markType, index: operationIndex++ });
+        }
+        continue;
+      }
       if (currentLayer && nextLayer) {
         Promise.resolve(onReplaceLayer(currentLayer, nextLayer, operation, { fromMarkType: currentLayer.dataset.markType, markType, index: operationIndex++ })).then(() => {
           const replacement = nextLayer.cloneNode(true);

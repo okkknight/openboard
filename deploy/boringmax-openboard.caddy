@@ -1,0 +1,11 @@
+# Insert inside the existing boringmax.com site block before its catch-all handle.
+redir /openboard /openboard/ 308
+
+@openboard path /openboard/*
+handle @openboard {
+	uri strip_prefix /openboard
+	# OpenBoard module asset URLs are stable across releases, so do not let a
+	# browser retain an older renderer after a server deploy.
+	header Cache-Control "no-store, max-age=0"
+	reverse_proxy 127.0.0.1:4324
+}

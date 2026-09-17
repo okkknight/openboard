@@ -140,9 +140,11 @@ test("history apply returns an earlier immutable scene snapshot", () => {
   const store = new SceneStore(seed());
   store.patchVisual("v1", { set: { title: "One" } });
   store.patchVisual("v1", { set: { title: "Two" } });
+  const recordsBeforeNavigation = store.historyRecords();
   const result = store.applyHistory({ action: "goto", revision: 1 });
   assert.equal(result.revision, 1);
   assert.equal(store.inspect().visuals.v1.title, "One");
+  assert.deepEqual(store.historyRecords(), recordsBeforeNavigation);
 });
 
 test("groups and arranges selected visuals", () => {

@@ -1,7 +1,7 @@
 import type { EffectiveScene, WorkActivity, WorkSession } from "../core/types.js";
 
 export interface SceneEvent {
-  type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed" | "work.started" | "work.activity" | "work.visual.changed" | "work.completed" | "work.cancelled" | "work.failed" | "work.snapshot";
+  type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed" | "work.started" | "work.activity" | "work.visual.changed" | "work.render.chunk" | "work.completed" | "work.cancelled" | "work.failed" | "work.snapshot";
   canvas_id: string;
   revision: number;
   visual_id?: string;

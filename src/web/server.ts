@@ -1,14 +1,18 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
+import type { McpHttpHandler } from "@modelcontextprotocol/server";
 import { toolSchemas } from "../mcp/schemas.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
-import type { QuerySpec, VisualPatch, VisualSpec, WorkingVisualDraft } from "../core/types.js";
+import type { QuerySpec, VisualPatch, WorkingVisualDraft } from "../core/types.js";
 
 export interface RunningWebServer { port: number; close(): Promise<void>; }
+export interface WebServerOptions { basePath?: string; mcpToken?: string; mcpPath?: string; }
 
 const json = (response: ServerResponse, status: number, payload: unknown): void => {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -29,7 +33,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 
 function placementLayout(runtime: DataCanvasRuntime, placement: "auto" | "right" | "left" | "below" | "above") {
   const visuals = Object.values(runtime.inspect().visuals);
-  const size = { w: 480, h: 320 };
+  const size = { w: 720, h: 440 };
   if (!visuals.length) return { x: 0, y: 0, ...size };
   const anchor = visuals.at(-1)!.layout;
   if (placement === "left") return { x: anchor.x - size.w - 24, y: anchor.y, ...size };
@@ -45,9 +49,43 @@ function mutationError(error: unknown): { status: number; body: Record<string, u
   return { status, body: { status: "error", error: { code, message } } };
 }
 
-export async function createWebServer(runtime: DataCanvasRuntime, port: number): Promise<RunningWebServer> {
+function normalizeBasePath(value: string | undefined): string {
+  if (!value || value === "/") return "";
+  if (!value.startsWith("/") || value.includes("?", 1) || value.includes("#", 1)) throw new Error("invalid_openboard_base_path");
+  return value.replace(/\/+$/, "");
+}
+
+function requestHeaders(request: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value === undefined) continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+  }
+  return headers;
+}
+
+function toWebRequest(request: IncomingMessage): Request {
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  const init: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers: requestHeaders(request),
+    ...(hasBody ? { body: Readable.toWeb(request) as unknown as BodyInit, duplex: "half" } : {})
+  };
+  return new Request(`http://127.0.0.1${request.url ?? "/"}`, init);
+}
+
+async function pipeMcpResponse(response: ServerResponse, upstream: Response): Promise<void> {
+  response.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+  if (!upstream.body) { response.end(); return; }
+  Readable.fromWeb(upstream.body as unknown as NodeReadableStream<any>).pipe(response);
+}
+
+export async function createWebServer(runtime: DataCanvasRuntime, port: number, mcpHandler?: McpHttpHandler, options: WebServerOptions = {}): Promise<RunningWebServer> {
+  const basePath = normalizeBasePath(options.basePath);
+  const mcpPath = options.mcpPath ?? "/mcp";
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/index.html");
   const workOrderPath = join(dirname(fileURLToPath(import.meta.url)), "work-event-order.js");
+  const workQueuePath = join(dirname(fileURLToPath(import.meta.url)), "work-event-queue.js");
   const identityRegistryPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-identity-registry.js");
   const renderReconcilerPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-reconciler.js");
   const renderMotionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-motion.js");
@@ -56,6 +94,25 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
   const plotPath = join(dirname(fileURLToPath(import.meta.url)), "../../node_modules/@observablehq/plot/dist/plot.umd.min.js");
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      const scene = runtime.inspect();
+      json(response, 200, { status: "ok", service: "openboard", canvas_id: scene.canvas_id, revision: scene.revision });
+      return;
+    }
+    if (url.pathname === mcpPath && mcpHandler) {
+      if (options.mcpToken && request.headers.authorization !== `Bearer ${options.mcpToken}`) {
+        response.writeHead(401, { "www-authenticate": "Bearer" });
+        response.end();
+        return;
+      }
+      try {
+        await pipeMcpResponse(response, await mcpHandler.fetch(toWebRequest(request)));
+      } catch (error) {
+        if (!response.headersSent) json(response, 500, { status: "error", error: { code: "mcp_http_error", message: error instanceof Error ? error.message : String(error) } });
+        else response.destroy();
+      }
+      return;
+    }
     if (request.method === "POST" && url.pathname === "/api/work") {
       try {
         const parsed = toolSchemas["work.apply"].safeParse(await readJson(request));
@@ -98,10 +155,8 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
         const parsed = toolSchemas["visual.create"].safeParse(await readJson(request));
         if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
         const input = parsed.data;
-        const id = input.id ?? `v${Object.keys(runtime.inspect().visuals).length + 1}`;
-        const visual: VisualSpec | WorkingVisualDraft = input.work_id
-          ? { id, kind: input.kind, title: input.title, source: input.source, query: input.query as QuerySpec | undefined, coordinate: input.coordinate, marks: input.marks, layout: input.layout ?? placementLayout(runtime, input.placement) } as WorkingVisualDraft
-          : { id, kind: input.kind, title: input.title, source: String(input.source), query: input.query as QuerySpec, coordinate: input.coordinate, marks: input.marks, layout: input.layout ?? placementLayout(runtime, input.placement) } as VisualSpec;
+        const id = input.id;
+        const visual: WorkingVisualDraft = { id, kind: input.kind, title: input.title, source: input.source, query: input.query as QuerySpec | undefined, coordinate: input.coordinate, marks: input.marks, layout: input.layout ?? placementLayout(runtime, input.placement) } as WorkingVisualDraft;
         json(response, 200, await runtime.visualCreate(visual, input.expected_revision, input.work_id));
       } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
       return;
@@ -130,7 +185,7 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
       } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
       return;
     }
-    if (request.url === "/api/scene") {
+    if (url.pathname === "/api/scene") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(runtime.inspect()));
       return;
@@ -143,51 +198,59 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number):
     if (url.pathname.startsWith("/api/visual/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/visual/".length));
       try {
-        const payload = await runtime.renderVisual(id, url.searchParams.get("work_id") ?? undefined);
+        const rawGeneration = url.searchParams.get("artifact_generation");
+        const artifactGeneration = rawGeneration === null ? undefined : Number(rawGeneration);
+        if (artifactGeneration !== undefined && (!Number.isSafeInteger(artifactGeneration) || artifactGeneration < 1)) throw new Error("invalid_artifact_generation");
+        const payload = await runtime.renderVisual(id, url.searchParams.get("work_id") ?? undefined, artifactGeneration);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(payload));
       } catch { if (!response.headersSent) response.writeHead(404).end(); else response.destroy(); }
       return;
     }
-    if (request.url === "/assets/plot.js") {
+    if (url.pathname === "/assets/plot.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(plotPath));
       return;
     }
-    if (request.url === "/assets/d3.js") {
+    if (url.pathname === "/assets/d3.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(d3Path));
       return;
     }
-    if (request.url === "/assets/work-event-order.js") {
+    if (url.pathname === "/assets/work-event-order.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(workOrderPath));
       return;
     }
-    if (request.url === "/assets/render-identity-registry.js") {
+    if (url.pathname === "/assets/work-event-queue.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(workQueuePath));
+      return;
+    }
+    if (url.pathname === "/assets/render-identity-registry.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(identityRegistryPath));
       return;
     }
-    if (request.url === "/assets/render-reconciler.js") {
+    if (url.pathname === "/assets/render-reconciler.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(renderReconcilerPath));
       return;
     }
-    if (request.url === "/assets/render-motion.js") {
+    if (url.pathname === "/assets/render-motion.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(renderMotionPath));
       return;
     }
-    if (request.url === "/assets/cross-mark-transition.js") {
+    if (url.pathname === "/assets/cross-mark-transition.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(crossMarkTransitionPath));
       return;
     }
-    if (request.url === "/favicon.ico") { response.writeHead(204).end(); return; }
-    if (request.url === "/" || request.url === "/index.html") {
+    if (url.pathname === "/favicon.ico") { response.writeHead(204).end(); return; }
+    if (url.pathname === "/" || url.pathname === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      response.end(await readFile(indexPath));
+      response.end((await readFile(indexPath, "utf8")).replaceAll("__OPENBOARD_BASE_PATH__", basePath));
       return;
     }
     response.writeHead(404).end();

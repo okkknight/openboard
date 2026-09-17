@@ -23,16 +23,38 @@ async function waitFor(check) {
 
 class SlowQueryEngine extends DuckDbEngine {
   constructor(gate) { super(); this.gate = gate; this.queries = 0; }
-  async query(dataset, compiled) {
+  async *stream(dataset, compiled) {
     this.queries += 1;
     await this.gate.promise;
-    return super.query(dataset, compiled);
+    yield* super.stream(dataset, compiled);
   }
 }
 
 class CountingQueryEngine extends DuckDbEngine {
   constructor() { super(); this.queries = 0; }
-  async query(dataset, compiled) { this.queries += 1; return super.query(dataset, compiled); }
+  async *stream(dataset, compiled) { this.queries += 1; yield* super.stream(dataset, compiled); }
+}
+
+class GatedStreamingEngine extends DuckDbEngine {
+  constructor(gate) { super(); this.gate = gate; }
+  async *stream() {
+    yield { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }] };
+    await this.gate.promise;
+    yield { columns: ["channel", "orders"], rows: [{ channel: "B", orders: 12 }] };
+  }
+}
+
+class FailingCommitPersistence extends Persistence {
+  async saveRuntimeState() { throw new Error("simulated_disk_failure"); }
+}
+
+class FailsOnceCommitPersistence extends Persistence {
+  attempts = 0;
+  async saveRuntimeState(state) {
+    this.attempts += 1;
+    if (this.attempts === 1) throw new Error("simulated_disk_failure");
+    return super.saveRuntimeState(state);
+  }
 }
 
 function scene(revision = 20) {
@@ -77,15 +99,17 @@ test("direct visual creation also exposes working state before a slow render", a
   const events = [];
   runtime.onEvent((event) => events.push(event));
 
-  const pending = runtime.visualCreate(fullVisual());
+  const work = await runtime.workApply({ action: "begin" });
+  const pending = runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
   await waitFor(() => events.some((event) => event.type === "work.visual.changed"));
   assert.equal(runtime.inspect().visuals["channel-orders"], undefined);
   assert.equal(events.some((event) => event.type === "work.activity" && event.activity?.kind === "render" && event.activity?.status === "completed"), false);
 
   gate.release();
   const result = await pending;
-  assert.equal(result.revision, 21);
-  assert.equal(runtime.inspect().visuals["channel-orders"].title, "Orders by channel");
+  assert.equal(result.revision, 20);
+  assert.equal(runtime.inspect().visuals["channel-orders"], undefined);
+  await runtime.workApply({ action: "cancel", work_id: work.result.work_id });
   runtime.close();
 });
 
@@ -135,6 +159,40 @@ test("keeps persisted scene and history untouched until one work commit", async 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("rolls back a work commit when atomically persisting its durable state fails", async () => {
+  const runtime = new DataCanvasRuntime(scene(), new FailingCommitPersistence("/tmp/openboard-failing-commit"));
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+  const work = await runtime.workApply({ action: "begin" });
+  await runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
+
+  await assert.rejects(() => runtime.workApply({ action: "commit", work_id: work.result.work_id }), /simulated_disk_failure/);
+
+  assert.equal(runtime.inspect().revision, 20);
+  assert.equal(runtime.inspect().visuals["channel-orders"], undefined);
+  assert.equal(runtime.inspectWorkSnapshots().find((entry) => entry.work.id === work.result.work_id)?.work.status, "active");
+  assert.equal(events.some((event) => event.type === "work.completed"), false);
+  runtime.close();
+});
+
+test("retries a rolled-back work commit after persistence recovers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openboard-retry-commit-"));
+  try {
+    const persistence = new FailsOnceCommitPersistence(root);
+    const runtime = new DataCanvasRuntime(scene(), persistence);
+    const work = await runtime.workApply({ action: "begin" });
+    await runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
+
+    await assert.rejects(() => runtime.workApply({ action: "commit", work_id: work.result.work_id }), /simulated_disk_failure/);
+    const committed = await runtime.workApply({ action: "commit", work_id: work.result.work_id });
+
+    assert.equal(committed.revision, 21);
+    assert.equal(runtime.inspect().visuals["channel-orders"].title, "Orders by channel");
+    assert.equal((await persistence.loadScene()).revision, 21);
+    runtime.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("emits query activity only around a real work query", async () => {
   const runtime = new DataCanvasRuntime(scene());
   const events = [];
@@ -147,6 +205,22 @@ test("emits query activity only around a real work query", async () => {
   assert.equal(result.data.length, 4);
   assert.deepEqual(activity.map((event) => event.activity.status), ["started", "completed"]);
   assert.ok(activity[0].sequence < activity[1].sequence);
+  runtime.close();
+});
+
+test("work render activity and completion identify only their affected visuals", async () => {
+  const runtime = new DataCanvasRuntime(scene());
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+  const work = await runtime.workApply({ action: "begin" });
+
+  await runtime.visualCreate(fullVisual("affected"), undefined, work.result.work_id);
+  await runtime.workApply({ action: "commit", work_id: work.result.work_id });
+
+  const renderActivity = events.find((event) => event.type === "work.activity" && event.activity?.kind === "render");
+  const completed = events.find((event) => event.type === "work.completed");
+  assert.equal(renderActivity.activity.visual_id, "affected");
+  assert.deepEqual(completed.affected_ids, ["affected"]);
   runtime.close();
 });
 
@@ -164,15 +238,56 @@ test("returns a work render artifact without issuing a second DuckDB query", asy
   runtime.close();
 });
 
+test("publishes a renderable work artifact for each real DuckDB stream chunk", async () => {
+  const gate = deferred();
+  const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine: new GatedStreamingEngine(gate) });
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+  const work = await runtime.workApply({ action: "begin" });
+  const creating = runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
+
+  await waitFor(() => events.some((event) => event.type === "work.render.chunk"));
+  const chunk = events.find((event) => event.type === "work.render.chunk");
+  const partial = await runtime.renderVisual("channel-orders", work.result.work_id, chunk.payload.artifact_generation);
+  assert.equal(partial.result.rows, 1);
+  assert.equal(events.some((event) => event.type === "work.activity" && event.activity?.status === "completed"), false);
+
+  gate.release();
+  const completed = await creating;
+  assert.equal(completed.result.rows, 2);
+  assert.equal(events.filter((event) => event.type === "work.render.chunk").length, 2);
+  runtime.close();
+});
+
+test("streams the real orders aggregation as progressive artifacts before the final render", async () => {
+  const runtime = new DataCanvasRuntime(scene());
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+  const work = await runtime.workApply({ action: "begin" });
+  const result = await runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
+  const chunks = events.filter((event) => event.type === "work.render.chunk");
+
+  const rowCounts = chunks.map((event) => event.payload.row_count);
+  assert.ok(rowCounts.length > 1);
+  assert.equal(rowCounts.at(-1), 4);
+  assert.ok(rowCounts.every((count, index) => index === 0 || count > rowCounts[index - 1]));
+  assert.equal(result.result.rows, 4);
+  const finalChanged = events.findLastIndex((event) => event.type === "work.visual.changed");
+  assert.ok(chunks.at(-1).sequence < events[finalChanged].sequence);
+  runtime.close();
+});
+
 test("moving a rendered card does not issue another DuckDB query", async () => {
   const engine = new CountingQueryEngine();
   const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
-  await runtime.visualCreate(fullVisual());
+  const work = await runtime.workApply({ action: "begin" });
+  await runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
   const before = engine.queries;
 
-  await runtime.canvasCompose({ action: "move", target: "channel-orders", layout: { x: 120, y: 48, w: 520, h: 340 } });
+  await runtime.canvasCompose({ action: "move", target: "channel-orders", layout: { x: 120, y: 48, w: 520, h: 340 } }, undefined, work.result.work_id);
 
   assert.equal(engine.queries, before);
+  await runtime.workApply({ action: "commit", work_id: work.result.work_id });
   assert.deepEqual(runtime.inspect().visuals["channel-orders"].layout, { x: 120, y: 48, w: 520, h: 340 });
   runtime.close();
 });
@@ -203,7 +318,7 @@ test("keeps a five-second work session as execution-driven construction through 
   runtime.close();
 });
 
-test("shares an in-flight work artifact with a browser render request", async () => {
+test("returns a working response to the browser while a shared work stream is in flight", async () => {
   const gate = deferred();
   const engine = new SlowQueryEngine(gate);
   const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
@@ -212,14 +327,19 @@ test("shares an in-flight work artifact with a browser render request", async ()
   const create = runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
   await waitFor(() => engine.queries === 1);
   const browserRender = runtime.renderVisual("channel-orders", work.result.work_id);
-  await new Promise(setImmediate);
-  await new Promise(setImmediate);
-
-  assert.equal(engine.queries, 1);
-  gate.release();
-  const [created, rendered] = await Promise.all([create, browserRender]);
+  try {
+    const pending = Symbol("pending");
+    const rendered = await Promise.race([browserRender, new Promise((resolvePromise) => setImmediate(() => resolvePromise(pending)))]);
+    assert.notEqual(rendered, pending);
+    assert.equal(rendered.status, "working");
+    assert.equal(engine.queries, 1);
+  } finally {
+    gate.release();
+  }
+  const created = await create;
+  const final = await runtime.renderVisual("channel-orders", work.result.work_id);
   assert.equal(created.status, "rendered");
-  assert.equal(rendered.status, "rendered");
+  assert.equal(final.status, "rendered");
   assert.equal(engine.queries, 1);
   runtime.close();
 });
@@ -233,9 +353,21 @@ test("rejects incomplete and conflicted work commits without overwriting durable
 
   const conflicted = await runtime.workApply({ action: "begin" });
   await runtime.visualCreate(fullVisual(), undefined, conflicted.result.work_id);
-  await runtime.visualCreate({ ...fullVisual("outside"), title: "Outside change" });
+  const outside = await runtime.workApply({ action: "begin" });
+  await runtime.visualCreate({ ...fullVisual("outside"), title: "Outside change" }, undefined, outside.result.work_id);
+  await runtime.workApply({ action: "commit", work_id: outside.result.work_id });
   await assert.rejects(() => runtime.workApply({ action: "commit", work_id: conflicted.result.work_id }), /revision_conflict/);
   assert.equal(runtime.inspect().revision, 21);
   assert.equal(runtime.inspect().visuals.outside.title, "Outside change");
+  runtime.close();
+});
+
+test("rejects every chart and data operation that omits an explicit work session", async () => {
+  const runtime = new DataCanvasRuntime(scene(0));
+  await assert.rejects(() => runtime.visualCreate(fullVisual()), /work_required/);
+  await assert.rejects(() => runtime.visualPatch("missing", { set: { title: "No bypass" } }), /work_required/);
+  await assert.rejects(() => runtime.visualClone("missing", "copy"), /work_required/);
+  assert.equal(runtime.inspect().revision, 0);
+  assert.deepEqual(Object.keys(runtime.inspect().visuals), []);
   runtime.close();
 });

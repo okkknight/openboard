@@ -18,7 +18,7 @@ export interface RuntimeResult {
 }
 
 interface RenderPayload { rows: JsonObject[]; columns: string[]; plot: PlotConfig; observation: Observation; }
-interface RenderArtifact { visual: VisualSpec; revision: number; payload: RenderPayload; generation: number; }
+interface RenderArtifact { visual: VisualSpec; revision: number; payload: RenderPayload; generation: number; cache_generation: number; }
 
 export interface RenderArtifactV2 {
   artifact_version: 2;
@@ -45,17 +45,17 @@ export class DataCanvasRuntime {
   #events = new EventBus();
   #works = new WorkSessionStore();
   #artifacts = new Map<string, RenderArtifact>();
+  #artifactsByGeneration = new Map<string, RenderArtifact>();
   #artifactPromises = new Map<string, Promise<RenderArtifact>>();
   #artifactGenerations = new Map<string, number>();
+  #streamArtifactGenerations = new Map<string, number>();
   #persistence?: Persistence;
-  #persistedHistoryLength = 0;
   #pointLimit: number;
 
   constructor(scene: Scene, persistence?: Persistence, historySeed?: HistoryStoreSeed, options: RuntimeOptions = {}) {
     this.#store = new SceneStore(scene, historySeed);
     this.#engine = options.engine ?? new DuckDbEngine();
     this.#persistence = persistence;
-    this.#persistedHistoryLength = historySeed?.records?.length ?? 0;
     this.#pointLimit = options.point_limit ?? 50_000;
   }
 
@@ -78,19 +78,29 @@ export class DataCanvasRuntime {
     if (input.action === "cancel") {
       const cancelled = this.#works.cancel(input.work_id);
       this.#clearWorkArtifacts(cancelled.id);
-      this.#emitWork("work.cancelled", cancelled);
+      this.#emitWork("work.cancelled", cancelled, undefined, undefined, this.#affectedVisualIds(cancelled));
       return this.#workResult(cancelled);
     }
     const work = this.#works.get(input.work_id);
+    const affectedIds = this.#affectedVisualIds(work);
     const durable = this.#store.inspect();
     if (durable.revision !== work.base_revision) throw new RevisionConflictError(work.base_revision, durable.revision);
     const materialized = this.#works.materializeForCommit(work.id, durable);
+    const beforeCommit = this.#store.snapshotState();
     this.#works.next(work.id, "committing");
-    const mutation = this.#store.commitWork(materialized, { work_id: work.id, operation_count: work.overlay.operations }, work.base_revision);
-    await this.#persist();
+    let mutation: HistoryMutationResult;
+    try {
+      mutation = this.#store.commitWork(materialized, { work_id: work.id, operation_count: work.overlay.operations }, work.base_revision);
+      await this.#persist();
+    } catch (error) {
+      this.#store.restoreState(beforeCommit);
+      const restored = this.#works.next(work.id, "active");
+      this.#emitWork("work.failed", restored, undefined, undefined, affectedIds);
+      throw error;
+    }
     this.#promoteWorkArtifacts(work.id, mutation.revision);
     const completed = this.#works.complete(work.id);
-    this.#emitWork("work.completed", completed, undefined, mutation.revision);
+    this.#emitWork("work.completed", completed, undefined, mutation.revision, affectedIds);
     return { status: "ok", canvas_id: durable.canvas_id, revision: mutation.revision, result: { work_id: completed.id, base_revision: completed.base_revision, sequence: completed.sequence } };
   }
 
@@ -112,49 +122,56 @@ export class DataCanvasRuntime {
     return workId ? this.#withActivity(workId, "query", `Querying ${id}`, execute) : execute();
   }
 
-  async renderVisual(id: string, workId?: string): Promise<RuntimeResult> {
+  async renderVisual(id: string, workId?: string, artifactGeneration?: number): Promise<RuntimeResult> {
     const durable = this.#store.inspect();
     const scene = workId ? this.#works.effectiveScene(workId, durable) : durable;
     const visual = scene.visuals[id];
     if (!visual) throw new Error(`not_found: visual ${id}`);
     if (!isCompleteVisual(visual)) return this.#workingResponse(visual, durable.revision);
     const key = this.#artifactKey(id, durable.revision, workId);
+    if (artifactGeneration !== undefined) {
+      const artifact = this.#artifactsByGeneration.get(this.#artifactGenerationKey(key, artifactGeneration));
+      if (!artifact) throw new Error(`not_found: render artifact ${artifactGeneration}`);
+      return this.#response(artifact, workId);
+    }
+    const cacheGeneration = this.#artifactGenerations.get(key) ?? 0;
+    if (workId && this.#artifactPromises.has(`${key}@${cacheGeneration}`)) {
+      const latest = this.#artifacts.get(key);
+      return latest ? this.#response(latest, workId) : this.#workingResponse(visual, durable.revision);
+    }
     const artifact = await this.#artifactFor(key, visual, durable.revision, workId);
     return this.#response(artifact, workId);
   }
 
   async visualCreate(visual: VisualSpec | WorkingVisualDraft, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (!workId) {
-      return this.#implicitWork(expectedRevision, (id) => this.visualCreate(visual, undefined, id));
-    }
-    const work = this.#works.createDraft(workId, visual);
-    this.#clearWorkArtifact(workId, visual.id);
+    const explicitWorkId = this.#requireWork(workId);
+    this.#assertExpectedRevision(expectedRevision);
+    const work = this.#works.createDraft(explicitWorkId, visual, this.#store.inspect());
+    this.#clearWorkArtifact(explicitWorkId, visual.id);
     this.#emitWork("work.visual.changed", work, visual.id);
-    return this.#renderWorkingVisual(workId, visual.id);
+    return this.#renderWorkingVisual(explicitWorkId, visual.id);
   }
 
   async visualPatch(id: string, patch: VisualPatch, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (!workId) {
-      return this.#implicitWork(expectedRevision, (work) => this.visualPatch(id, patch, undefined, work));
-    }
-    const work = this.#works.patchVisual(workId, id, patch, this.#store.inspect());
-    this.#clearWorkArtifact(workId, id);
+    const explicitWorkId = this.#requireWork(workId);
+    this.#assertExpectedRevision(expectedRevision);
+    const work = this.#works.patchVisual(explicitWorkId, id, patch, this.#store.inspect());
+    this.#clearWorkArtifact(explicitWorkId, id);
     this.#emitWork("work.visual.changed", work, id);
-    return this.#renderWorkingVisual(workId, id);
+    return this.#renderWorkingVisual(explicitWorkId, id);
   }
 
   async visualClone(id: string, newId: string, patch?: VisualPatch, expectedRevision?: number, workId?: string): Promise<RuntimeResult> {
-    if (!workId) {
-      return this.#implicitWork(expectedRevision, (work) => this.visualClone(id, newId, patch, undefined, work));
-    }
-    const source = this.#works.effectiveScene(workId, this.#store.inspect()).visuals[id];
+    const explicitWorkId = this.#requireWork(workId);
+    this.#assertExpectedRevision(expectedRevision);
+    const source = this.#works.effectiveScene(explicitWorkId, this.#store.inspect()).visuals[id];
     if (!source) throw new Error(`not_found: visual ${id}`);
     const copy = { ...structuredClone(source), id: newId, derived_from: id } as WorkingVisualDraft;
-    let work = this.#works.createDraft(workId, copy);
-    if (patch) work = this.#works.patchVisual(workId, newId, patch, this.#store.inspect());
-    this.#clearWorkArtifact(workId, newId);
+    let work = this.#works.createDraft(explicitWorkId, copy, this.#store.inspect());
+    if (patch) work = this.#works.patchVisual(explicitWorkId, newId, patch, this.#store.inspect());
+    this.#clearWorkArtifact(explicitWorkId, newId);
     this.#emitWork("work.visual.changed", work, newId);
-    return this.#renderWorkingVisual(workId, newId);
+    return this.#renderWorkingVisual(explicitWorkId, newId);
   }
 
   async canvasCompose(input: ComposeInput, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
@@ -175,7 +192,7 @@ export class DataCanvasRuntime {
 
   async canvasAnnotate(annotation: AnnotationSpec, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
     if (workId) {
-      const work = this.#works.annotate(workId, annotation);
+      const work = this.#works.annotate(workId, annotation, this.#store.inspect());
       this.#emitWork("work.visual.changed", work, annotation.target);
       return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision };
     }
@@ -183,7 +200,7 @@ export class DataCanvasRuntime {
     await this.#persist();
     const scene = this.#store.inspect();
     this.#events.emit({ type: "annotation.created", canvas_id: scene.canvas_id, revision: mutation.revision, annotation_id: annotation.id });
-    return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
+    return { status: "ok", canvas_id: scene.canvas_id, revision: scene.revision };
   }
 
   async historyApply(input: HistoryApplyInput): Promise<{ status: "ok"; canvas_id: string; revision: number; result?: { checkpoint?: string; parent_revision?: number; branch_id?: string } }> {
@@ -207,34 +224,18 @@ export class DataCanvasRuntime {
     return this.#response(artifact, workId);
   }
 
-  async #implicitWork<T extends { revision: number }>(expectedRevision: number | undefined, operation: (workId: string) => Promise<T>): Promise<T> {
-    const durable = this.#store.inspect();
-    if (expectedRevision !== undefined && expectedRevision !== durable.revision) throw new RevisionConflictError(expectedRevision, durable.revision);
-    const work = this.#works.begin(durable);
-    this.#emitWork("work.started", work);
-    try {
-      const result = await operation(work.id);
-      const committed = await this.workApply({ action: "commit", work_id: work.id });
-      return { ...result, revision: committed.revision };
-    } catch (error) {
-      try { this.#works.get(work.id); await this.workApply({ action: "cancel", work_id: work.id }); } catch { /* terminal work or failed cleanup */ }
-      throw error;
-    }
-  }
-
   async #artifactFor(key: string, visual: VisualSpec, revision: number, workId?: string): Promise<RenderArtifact> {
     const generation = this.#artifactGenerations.get(key) ?? 0;
     const cached = this.#artifacts.get(key);
-    if (cached?.generation === generation) return cached;
+    if (cached?.cache_generation === generation) return cached;
     const requestKey = `${key}@${generation}`;
     const inFlight = this.#artifactPromises.get(requestKey);
     if (inFlight) return inFlight;
     const promise = (async () => {
-      const payload = workId
-        ? await this.#withActivity(workId, "render", `Rendering ${visual.id}`, () => this.#render(visual))
-        : await this.#render(visual);
-      const artifact = { visual: structuredClone(visual), revision, payload, generation };
-      if ((this.#artifactGenerations.get(key) ?? 0) === generation) this.#artifacts.set(key, artifact);
+      if (workId) return this.#withActivity(workId, "render", `Streaming ${visual.id}`, () => this.#renderStream(key, visual, revision, workId), visual.id);
+      const payload = await this.#render(visual);
+      const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: generation };
+      this.#storeArtifact(key, artifact);
       return artifact;
     })();
     this.#artifactPromises.set(requestKey, promise);
@@ -245,28 +246,73 @@ export class DataCanvasRuntime {
     }
   }
 
-  async #withActivity<T>(workId: string, kind: WorkActivity["kind"], label: string, operation: () => Promise<T>): Promise<T> {
-    const started = this.#works.setActivity(workId, { kind, status: "started", label });
-    this.#emitWork("work.activity", started);
+  async #withActivity<T>(workId: string, kind: WorkActivity["kind"], label: string, operation: () => Promise<T>, visualId?: string): Promise<T> {
+    const activity = { kind, status: "started" as const, label, ...(visualId ? { visual_id: visualId } : {}) };
+    const started = this.#works.setActivity(workId, activity);
+    this.#emitWork("work.activity", started, visualId);
     try {
       const result = await operation();
-      const completed = this.#works.setActivity(workId, { kind, status: "completed", label });
-      this.#emitWork("work.activity", completed);
+      const completed = this.#works.setActivity(workId, { ...activity, status: "completed" });
+      this.#emitWork("work.activity", completed, visualId);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failed = this.#works.setActivity(workId, { kind, status: "failed", label, error: message });
-      this.#emitWork("work.failed", failed);
+      const failed = this.#works.setActivity(workId, { ...activity, status: "failed", error: message });
+      this.#emitWork("work.failed", failed, visualId);
       throw error;
     }
   }
 
-  #emitWork(type: Extract<SceneEvent["type"], `work.${string}`>, work: WorkSession, visualId?: string, revision = this.#store.inspect().revision): void {
+  #affectedVisualIds(work: WorkSession): string[] {
+    return [...new Set([...Object.keys(work.overlay.visuals), ...work.overlay.removed_visual_ids])];
+  }
+
+  #emitWork(type: Extract<SceneEvent["type"], `work.${string}`>, work: WorkSession, visualId?: string, revision = this.#store.inspect().revision, affectedIds?: string[], payload?: Record<string, unknown>): void {
     let effective: EffectiveScene | undefined;
     if (type !== "work.completed" && type !== "work.cancelled") {
       try { effective = this.#works.effectiveScene(work.id, this.#store.inspect()); } catch { /* terminal session has no overlay */ }
     }
-    this.#events.emit({ type, canvas_id: this.#store.inspect().canvas_id, revision, visual_id: visualId, work_id: work.id, base_revision: work.base_revision, sequence: work.sequence, activity: work.activity, work, effective_scene: effective });
+    this.#events.emit({ type, canvas_id: this.#store.inspect().canvas_id, revision, visual_id: visualId, ...(affectedIds?.length ? { affected_ids: affectedIds } : {}), ...(payload ? { payload } : {}), work_id: work.id, base_revision: work.base_revision, sequence: work.sequence, activity: work.activity, work, effective_scene: effective });
+  }
+
+  async #renderStream(key: string, visual: VisualSpec, revision: number, workId: string): Promise<RenderArtifact> {
+    const dataset = this.#dataset(visual.source);
+    const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
+    const query = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], visual.query);
+    const rowCount = visual.query.sql ? await this.#engine.countRaw(dataset, query.sql) : await this.#engine.count(dataset, query);
+    assertRenderable(rowCount, this.#pointLimit, visual.query.sample);
+    const stream = visual.query.sql ? this.#engine.streamRaw(dataset, query.sql) : this.#engine.stream(dataset, query);
+    const rows: JsonObject[] = [];
+    let columns: string[] = [];
+    let artifact: RenderArtifact | undefined;
+    let chunkIndex = 0;
+    for await (const chunk of stream) {
+      chunkIndex += 1;
+      columns = chunk.columns;
+      rows.push(...chunk.rows);
+      assertRenderable(rows.length, this.#pointLimit, visual.query.sample);
+      artifact = this.#streamArtifact(key, visual, revision, rows, columns);
+      const changed = this.#works.next(workId);
+      this.#emitWork("work.render.chunk", changed, visual.id, undefined, undefined, {
+        artifact_generation: artifact.generation,
+        chunk_index: chunkIndex,
+        row_count: rows.length
+      });
+      // Yield the event loop so the browser can receive this WebSocket frame and
+      // request its immutable artifact before DuckDB advances to the next chunk.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    if (!artifact) artifact = this.#streamArtifact(key, visual, revision, rows, columns);
+    return artifact;
+  }
+
+  #streamArtifact(key: string, visual: VisualSpec, revision: number, rows: JsonObject[], columns: string[]): RenderArtifact {
+    const numericFields = (visual.query.measures ?? []).map((measure) => measure.alias);
+    const categoryFields = (visual.query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
+    const payload = { rows: structuredClone(rows), columns: structuredClone(columns), plot: compilePlot(visual, rows), observation: observe(rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
+    const artifact = { visual: structuredClone(visual), revision, payload, generation: this.#nextStreamArtifactGeneration(key), cache_generation: this.#artifactGenerations.get(key) ?? 0 };
+    this.#storeArtifact(key, artifact);
+    return artifact;
   }
 
   async #render(visual: VisualSpec): Promise<RenderPayload> {
@@ -284,6 +330,14 @@ export class DataCanvasRuntime {
     const dataset = this.#store.inspect().datasets[id];
     if (!dataset) throw new Error(`not_found: dataset ${id}`);
     return dataset;
+  }
+  #requireWork(workId: string | undefined): string {
+    if (!workId) throw new Error("work_required: explicit work.apply begin is required");
+    return workId;
+  }
+  #assertExpectedRevision(expectedRevision: number | undefined): void {
+    const currentRevision = this.#store.inspect().revision;
+    if (expectedRevision !== undefined && expectedRevision !== currentRevision) throw new RevisionConflictError(expectedRevision, currentRevision);
   }
   #response(artifact: RenderArtifact, workId?: string): RuntimeResult {
     const { visual, revision, payload, generation } = artifact;
@@ -305,32 +359,45 @@ export class DataCanvasRuntime {
     return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision, result: { work_id: work.id, base_revision: work.base_revision, sequence: work.sequence } };
   }
   #artifactKey(id: string, revision: number, workId?: string): string { return workId ? `work:${workId}:${id}` : `scene:${revision}:${id}`; }
+  #artifactGenerationKey(key: string, generation: number): string { return `${key}@${generation}`; }
+  #nextStreamArtifactGeneration(key: string): number {
+    const generation = (this.#streamArtifactGenerations.get(key) ?? 0) + 1;
+    this.#streamArtifactGenerations.set(key, generation);
+    return generation;
+  }
+  #storeArtifact(key: string, artifact: RenderArtifact): void {
+    this.#artifacts.set(key, artifact);
+    this.#artifactsByGeneration.set(this.#artifactGenerationKey(key, artifact.generation), artifact);
+  }
   #clearWorkArtifact(workId: string, id: string): void {
     const key = this.#artifactKey(id, this.#store.inspect().revision, workId);
     this.#artifacts.delete(key);
+    for (const artifactKey of this.#artifactsByGeneration.keys()) if (artifactKey.startsWith(`${key}@`)) this.#artifactsByGeneration.delete(artifactKey);
+    this.#streamArtifactGenerations.delete(key);
     this.#artifactGenerations.set(key, (this.#artifactGenerations.get(key) ?? 0) + 1);
   }
 
   #clearWorkArtifacts(workId: string): void {
     for (const key of this.#artifacts.keys()) if (key.startsWith(`work:${workId}:`)) this.#artifacts.delete(key);
+    for (const key of this.#artifactsByGeneration.keys()) if (key.startsWith(`work:${workId}:`)) this.#artifactsByGeneration.delete(key);
     for (const key of this.#artifactGenerations.keys()) if (key.startsWith(`work:${workId}:`)) this.#artifactGenerations.delete(key);
+    for (const key of this.#streamArtifactGenerations.keys()) if (key.startsWith(`work:${workId}:`)) this.#streamArtifactGenerations.delete(key);
   }
   #promoteWorkArtifacts(workId: string, revision: number): void {
     for (const [key, artifact] of this.#artifacts) if (key.startsWith(`work:${workId}:`)) {
       const id = key.slice(`work:${workId}:`.length);
-      this.#artifacts.set(this.#artifactKey(id, revision), { ...artifact, revision, generation: 0 });
+      this.#artifacts.set(this.#artifactKey(id, revision), { ...artifact, revision, generation: 0, cache_generation: 0 });
       this.#artifacts.delete(key);
     }
   }
   async #persist(): Promise<void> {
     if (!this.#persistence) return;
-    const scene = this.#store.inspect();
-    await this.#persistence.saveScene(scene);
-    await this.#persistence.saveSnapshot(scene);
-    await this.#persistence.saveMetadata({ checkpoints: this.#store.historyCheckpoints(), forks: this.#store.historyForks() });
-    const records = this.#store.historyRecords();
-    for (const record of records.slice(this.#persistedHistoryLength)) await this.#persistence.appendHistory(record);
-    this.#persistedHistoryLength = records.length;
+    await this.#persistence.saveRuntimeState({
+      scene: this.#store.inspect(),
+      history: this.#store.historyRecords(),
+      snapshots: this.#store.historySnapshots(),
+      metadata: { checkpoints: this.#store.historyCheckpoints(), forks: this.#store.historyForks() }
+    });
   }
   #historyResult(mutation: HistoryMutationResult): { checkpoint?: string; parent_revision?: number; branch_id?: string } | undefined {
     const result: { checkpoint?: string; parent_revision?: number; branch_id?: string } = {};

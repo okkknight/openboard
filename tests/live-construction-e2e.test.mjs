@@ -6,15 +6,40 @@ import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
 import { createMcpServer } from "../dist/mcp/server.js";
 import { toolSchemas } from "../dist/mcp/schemas.js";
 import { createWebServer } from "../dist/web/server.js";
+import { DuckDbEngine } from "../dist/data/duckdb-engine.js";
+
+function deferred() {
+  let release;
+  const promise = new Promise((resolvePromise) => { release = resolvePromise; });
+  return { promise, release };
+}
+
+async function waitFor(check) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (check()) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+  }
+  throw new Error("timed out waiting for condition");
+}
+
+class TwoChunkEngine extends DuckDbEngine {
+  constructor(firstGate, secondGate) { super(); this.firstGate = firstGate; this.secondGate = secondGate; }
+  async *stream() {
+    await this.firstGate.promise;
+    yield { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }] };
+    await this.secondGate.promise;
+    yield { columns: ["channel", "orders"], rows: [{ channel: "B", orders: 12 }] };
+  }
+}
 
 function visualPatch() {
   return {
-    set: {
-      source: "orders",
-      query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] },
-      marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }],
-      layout: { x: 0, y: 0, w: 480, h: 320 }
-    }
+      set: {
+        source: "orders",
+        query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] },
+        layout: { x: 0, y: 0, w: 480, h: 320 }
+      },
+      add_marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }]
   };
 }
 
@@ -61,6 +86,71 @@ test("actual MCP, runtime, WebSocket, and HTTP flow commits one live work sessio
     assert.equal(workEvents.at(-1).type, "work.completed");
     for (let index = 1; index < workEvents.length; index += 1) assert.ok(workEvents[index].sequence > workEvents[index - 1].sequence);
   } finally {
+    socket.close();
+    await web.close();
+    runtime.close();
+  }
+});
+
+test("an attached browser receives a draft, a working response, and each real render chunk before commit", async () => {
+  const firstGate = deferred();
+  const secondGate = deferred();
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "stream-e2e", revision: 0,
+    datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } },
+    visuals: {}, annotations: {}, canvas: {}
+  }, undefined, undefined, { engine: new TwoChunkEngine(firstGate, secondGate) });
+  const web = await createWebServer(runtime, 0);
+  const mcp = createMcpServer(runtime);
+  const events = [];
+  const socket = new WebSocket(`ws://127.0.0.1:${web.port}/ws`);
+  await new Promise((resolvePromise, reject) => {
+    socket.once("open", resolvePromise);
+    socket.once("error", reject);
+  });
+  socket.on("message", (raw) => events.push(JSON.parse(raw.toString())));
+  const call = async (name, input) => {
+    const response = await mcp._registeredTools[name].handler(toolSchemas[name].parse(input));
+    return JSON.parse(response.content[0].text);
+  };
+
+  try {
+    const started = await call("work.apply", { action: "begin" });
+    const workId = started.result.work_id;
+    const create = call("visual.create", {
+      work_id: workId,
+      id: "orders-by-channel",
+      kind: "plot",
+      title: "Orders by channel",
+      source: "orders",
+      query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] },
+      marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }],
+      layout: { x: 0, y: 0, w: 480, h: 320 }
+    });
+
+    await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.visual.changed"));
+    const workingRequest = fetch(`http://127.0.0.1:${web.port}/api/visual/orders-by-channel?work_id=${workId}`).then((response) => response.json());
+    const pending = Symbol("pending");
+    const working = await Promise.race([workingRequest, new Promise((resolvePromise) => setTimeout(() => resolvePromise(pending), 100))]);
+    assert.notEqual(working, pending);
+    assert.equal(working.status, "working");
+    assert.equal(events.some((event) => event.work_id === workId && event.type === "work.render.chunk"), false);
+
+    firstGate.release();
+    await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.render.chunk"));
+    const chunk = events.find((event) => event.work_id === workId && event.type === "work.render.chunk");
+    const partial = await fetch(`http://127.0.0.1:${web.port}/api/visual/orders-by-channel?work_id=${workId}&artifact_generation=${chunk.payload.artifact_generation}`).then((response) => response.json());
+    assert.equal(partial.status, "rendered");
+    assert.equal(partial.result.rows, 1);
+    assert.equal(events.some((event) => event.work_id === workId && event.type === "work.completed"), false);
+
+    secondGate.release();
+    await create;
+    await call("work.apply", { action: "commit", work_id: workId });
+    await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.completed"));
+  } finally {
+    firstGate.release();
+    secondGate.release();
     socket.close();
     await web.close();
     runtime.close();

@@ -4,6 +4,7 @@ import { compilePlot } from "../dist/render/plot-compiler.js";
 import { canonicalRenderKey } from "../dist/render/render-identity.js";
 import { resolve } from "node:path";
 import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
+import { createInWork } from "./work-helpers.mjs";
 
 const visual = {
   id: "orders-by-channel",
@@ -145,7 +146,7 @@ test("exposes a versioned render artifact identity contract to browser callers",
     visuals: {}, annotations: {}, canvas: {}
   });
   try {
-    await runtime.visualCreate(visual);
+    await createInWork(runtime, visual);
     const rendered = await runtime.renderVisual("orders-by-channel");
     assert.deepEqual(rendered.result.artifact, {
       artifact_version: 2,

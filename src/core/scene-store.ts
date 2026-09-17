@@ -24,6 +24,11 @@ export interface HistoryMutationResult extends SceneMutationResult {
   branch_id?: string;
 }
 
+export interface SceneStoreState {
+  scene: Scene;
+  history: HistoryStoreSeed;
+}
+
 const IMMUTABLE_PATHS = new Set(["id", "derived_from", "marks"]);
 const ALLOWED_ROOTS = new Set(["title", "kind", "source", "query", "layout", "facet", "coordinate"]);
 
@@ -31,9 +36,13 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function validatePatchPath(path: string): void {
-  const root = path.split(".")[0];
-  if (root === "marks" && path.split(".").length >= 3) return;
+export function assertValidVisualPatchPath(path: string): void {
+  const segments = path.split(".");
+  const root = segments[0];
+  if (root === "marks" && segments.length >= 3) {
+    if (segments[2] === "id") throw new Error(`immutable_path: ${path}`);
+    return;
+  }
   if (IMMUTABLE_PATHS.has(path) || IMMUTABLE_PATHS.has(root)) {
     throw new Error(`immutable_path: ${path}`);
   }
@@ -73,19 +82,19 @@ function unsetObjectPath(target: Record<string, unknown>, segments: string[]): v
 }
 
 function setAtPath(target: Record<string, unknown>, path: string, value: JsonValue): void {
+  assertValidVisualPatchPath(path);
   const markPath = markForPath(target, path);
   if (markPath) { setObjectPath(markPath.mark, markPath.segments, value); return; }
-  validatePatchPath(path);
   setObjectPath(target, path.split("."), value);
 }
 
 function unsetAtPath(target: Record<string, unknown>, path: string): void {
+  assertValidVisualPatchPath(path);
   const markPath = markForPath(target, path);
   if (markPath) {
     unsetObjectPath(markPath.mark, markPath.segments);
     return;
   }
-  validatePatchPath(path);
   const segments = path.split(".");
   let cursor: Record<string, unknown> = target;
   for (const segment of segments.slice(0, -1)) {
@@ -96,7 +105,7 @@ function unsetAtPath(target: Record<string, unknown>, path: string): void {
   delete cursor[segments.at(-1)!];
 }
 
-function applyPatch(visual: VisualSpec, patch: VisualPatch): VisualSpec {
+export function applyVisualPatch(visual: VisualSpec, patch: VisualPatch): VisualSpec {
   const next = clone(visual) as VisualSpec & Record<string, unknown>;
 
   for (const [path, value] of Object.entries(patch.set ?? {})) setAtPath(next, path, value);
@@ -130,10 +139,27 @@ export class SceneStore {
     return clone(this.#scene);
   }
 
+  snapshotState(): SceneStoreState {
+    return {
+      scene: clone(this.#scene),
+      history: {
+        records: this.#history.records(),
+        snapshots: this.#history.revisions().map((revision) => this.#history.snapshotAt(revision)),
+        checkpoints: this.#history.checkpoints(),
+        forks: this.#history.forks()
+      }
+    };
+  }
+
+  restoreState(state: SceneStoreState): void {
+    this.#scene = clone(state.scene);
+    this.#history = new HistoryStore(this.#scene, state.history);
+  }
+
   previewPatch(id: string, patch: VisualPatch): VisualSpec {
     const visual = this.#scene.visuals[id];
     if (!visual) throw new Error(`not_found: visual ${id}`);
-    return applyPatch(visual, patch);
+    return applyVisualPatch(visual, patch);
   }
 
   previewClone(id: string, newId: string, patch?: VisualPatch): VisualSpec {
@@ -143,7 +169,7 @@ export class SceneStore {
     const visual = clone(source);
     visual.id = newId;
     visual.derived_from = id;
-    return patch ? applyPatch(visual, patch) : visual;
+    return patch ? applyVisualPatch(visual, patch) : visual;
   }
 
   #assertRevision(expectedRevision?: number): void {
@@ -171,7 +197,7 @@ export class SceneStore {
     const scene = this.#commit({ operation: "visual.patch", target: id, input: patch as unknown as JsonValue }, (draft) => {
       const visual = draft.visuals[id];
       if (!visual) throw new Error(`not_found: visual ${id}`);
-      draft.visuals[id] = normalizeVisual(applyPatch(visual, patch));
+      draft.visuals[id] = normalizeVisual(applyVisualPatch(visual, patch));
     }, expectedRevision);
     return { revision: scene.revision, visual: clone(scene.visuals[id]) };
   }
@@ -184,7 +210,7 @@ export class SceneStore {
       let visual = clone(source);
       visual.id = newId;
       visual.derived_from = id;
-      if (patch) visual = applyPatch(visual, patch);
+      if (patch) visual = applyVisualPatch(visual, patch);
       draft.visuals[newId] = normalizeVisual(visual);
     }, expectedRevision);
     return { revision: scene.revision, visual: clone(scene.visuals[newId]) };
@@ -284,6 +310,10 @@ export class SceneStore {
 
   historyRecords(): HistoryRecord[] {
     return this.#history.records();
+  }
+
+  historySnapshots(): Scene[] {
+    return this.#history.revisions().map((revision) => this.#history.snapshotAt(revision));
   }
 
   historyCheckpoints(): Record<string, number> {

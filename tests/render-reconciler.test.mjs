@@ -38,6 +38,13 @@ test("replaces a layer when a mark changes rendering type", () => {
   ), [{ type: "replace-layer", mark_id: "bars" }]);
 });
 
+test("replaces a retained arc layer when a streamed total changes", () => {
+  assert.deepEqual(planRenderOperations(
+    { axes_version: 1, layers: [layer(["A"], "datum", "arc")] },
+    { axes_version: 1, layers: [layer(["A", "B"], "datum", "arc")] }
+  ), [{ type: "replace-layer", mark_id: "bars" }]);
+});
+
 test("rejects a stale visual response before it can write DOM", () => {
   const generations = createRenderGenerationTracker();
   const first = generations.request("orders");

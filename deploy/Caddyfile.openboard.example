@@ -1,0 +1,8 @@
+# Recommended production shape: give OpenBoard its own host. Caddy handles
+# TLS and preserves WebSocket upgrades for /ws automatically.
+openboard.example.com {
+	# Module asset URLs are not content-hashed; always obtain the matching
+	# browser renderer for the active runtime release.
+	header Cache-Control "no-store, max-age=0"
+    reverse_proxy 127.0.0.1:4324
+}

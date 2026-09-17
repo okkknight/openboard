@@ -3,7 +3,20 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
 import { createWebServer } from "../dist/web/server.js";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import { createMcpServer } from "../dist/mcp/server.js";
+import { createInWork } from "./work-helpers.mjs";
 import WebSocket from "ws";
+
+async function readMcpJson(response) {
+  const body = await response.text();
+  if (response.headers.get("content-type")?.includes("text/event-stream")) {
+    const data = body.split("\n").find((line) => line.startsWith("data: "));
+    assert.ok(data, `MCP SSE response did not contain a data event: ${body}`);
+    return JSON.parse(data.slice("data: ".length));
+  }
+  return JSON.parse(body);
+}
 
 test("serves the current durable scene snapshot", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "web", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
@@ -12,6 +25,78 @@ test("serves the current durable scene snapshot", async () => {
     const response = await fetch(`http://127.0.0.1:${server.port}/api/scene`);
     assert.deepEqual(await response.json(), runtime.inspect());
   } finally { await server.close(); runtime.close(); }
+});
+
+test("serves a deployment health check with the current canvas revision", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "health", revision: 3, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/healthz`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { status: "ok", service: "openboard", canvas_id: "health", revision: 3 });
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("serves canvas assets, API requests, and WebSocket under a configured public base path", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "base-path", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0, undefined, { basePath: "/openboard" });
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /src="\/openboard\/assets\/d3\.js"/);
+    assert.match(html, /from '\/openboard\/assets\/work-event-order\.js'/);
+    assert.match(html, /const appPath = \(path\) => `\$\{basePath\}\$\{path\}`/);
+    assert.match(html, /\$\{basePath\}\/ws/);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("serves the canvas shell and module assets when a release query string is present", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "release-query", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const page = await fetch(`http://127.0.0.1:${server.port}/?release=lc2`).then((response) => response.text());
+    const module = await fetch(`http://127.0.0.1:${server.port}/assets/render-motion.js?v=lc2`).then((response) => response.text());
+    assert.match(page, /OpenBoard/);
+    assert.match(module, /createRenderMotion/);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("serves MCP HTTP requests through the same runtime as the web canvas", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "mcp-http", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const mcp = createMcpHandler(() => createMcpServer(runtime), { legacy: "stateless" });
+  const server = await createWebServer(runtime, 0, mcp);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } } })
+    });
+    assert.equal(response.status, 200);
+    const body = await readMcpJson(response);
+    assert.equal(body.result.serverInfo.name, "openboard");
+  } finally { await server.close(); await mcp.close(); runtime.close(); }
+});
+
+test("protects MCP HTTP requests with a configured bearer token", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "mcp-auth", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const mcp = createMcpHandler(() => createMcpServer(runtime), { legacy: "stateless" });
+  const server = await createWebServer(runtime, 0, mcp, { mcpToken: "test-token" });
+  try {
+    const unauthorized = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } } })
+    });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("www-authenticate"), "Bearer");
+
+    const authorized = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer test-token" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } } })
+    });
+    assert.equal(authorized.status, 200);
+    assert.equal((await readMcpJson(authorized)).result.serverInfo.name, "openboard");
+  } finally { await server.close(); await mcp.close(); runtime.close(); }
 });
 
 test("serves the spatial canvas controls and connection indicator", async () => {
@@ -102,7 +187,7 @@ test("refreshes durable metadata after a visual removal event", async () => {
   const server = await createWebServer(runtime, 0);
   try {
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
-    assert.match(html, /if \(event\.type === 'visual\.removed'[\s\S]*?durableScene = await fetch\('\/api\/scene'\)[\s\S]*?return;/);
+    assert.match(html, /if \(event\.type === 'visual\.removed'[\s\S]*?durableScene = await fetch\(appPath\('\/api\/scene'\)\)[\s\S]*?return;/);
   } finally { await server.close(); runtime.close(); }
 });
 
@@ -114,6 +199,20 @@ test("handles layout changes without re-rendering visual data", async () => {
     assert.match(html, /event\.type === 'layout\.changed'[\s\S]*?updateScene\(mergeEffectiveScene\(\), true\)/);
     assert.match(html, /applyLayout\(card, visualLayout\(visual\), animateLayout\)/);
     assert.doesNotMatch(html, /event\.type === 'layout\.changed'\) await reloadScene\(\)/);
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("handles live work events by rendering only affected cards", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "work-card-delta", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /async function applyWorkEvent\(event\)/);
+    assert.match(html, /async function renderAffectedVisuals\(ids, workId, artifactGeneration\)/);
+    assert.match(html, /function renderWorkingVisual\(id, workId\)/);
+    assert.match(html, /event\.type === 'work\.visual\.changed'[\s\S]{0,400}renderWorkingVisual\(event\.visual_id, event\.work_id\)[\s\S]{0,400}await renderAffectedVisuals/);
+    assert.match(html, /event\.affected_ids \?\? \[\]/);
+    assert.doesNotMatch(html, /if \(event\.type\.startsWith\('work\.'\)\)[\s\S]{0,800}renderEffectiveScene\(\)/);
   } finally { await server.close(); runtime.close(); }
 });
 
@@ -131,12 +230,16 @@ test("uses retained card birth and exit paths instead of reloading every visual"
 
 test("broadcasts a visual mutation revision over WebSocket", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "socket", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
-  await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 1, h: 1 } });
+  await createInWork(runtime, { id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 1, h: 1 } });
   const server = await createWebServer(runtime, 0);
   try {
     const event = await new Promise((resolve, reject) => {
       const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
-      socket.once("open", async () => { await runtime.visualPatch("v1", { set: { title: "Patched" } }); });
+      socket.once("open", async () => {
+        const begun = await runtime.workApply({ action: "begin" });
+        await runtime.visualPatch("v1", { set: { title: "Patched" } }, undefined, begun.result.work_id);
+        await runtime.workApply({ action: "commit", work_id: begun.result.work_id });
+      });
       socket.on("message", (data) => {
         const message = JSON.parse(data.toString());
         if (message.type === "work.completed" && message.revision === 2) { socket.close(); resolve(message); }
@@ -162,21 +265,46 @@ test("creates a visual through the live web control path without restarting the 
       });
       socket.once("error", reject);
     });
+    const begun = await fetch(`http://127.0.0.1:${server.port}/api/work`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "begin" })
+    }).then((result) => result.json());
+    const workId = begun.result.work_id;
     const eventPromise = waitForVisualEvent(1);
     const response = await fetch(`http://127.0.0.1:${server.port}/api/visual`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: "live-bar", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } })
+      body: JSON.stringify({ id: "live-bar", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 }, work_id: workId })
     });
     assert.equal(response.status, 200);
+    const committed = await fetch(`http://127.0.0.1:${server.port}/api/work/${workId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "commit", work_id: workId })
+    });
+    assert.equal(committed.status, 200);
     const event = await eventPromise;
+    assert.equal(event.revision, 1);
+    const patchBegun = await fetch(`http://127.0.0.1:${server.port}/api/work`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "begin" })
+    }).then((result) => result.json());
+    const patchWorkId = patchBegun.result.work_id;
     const patchEventPromise = waitForVisualEvent(2);
     const patchResponse = await fetch(`http://127.0.0.1:${server.port}/api/visual/live-bar`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ patch: { set: { title: "Live bar" } } })
+      body: JSON.stringify({ work_id: patchWorkId, patch: { set: { title: "Live bar" } } })
     });
     assert.equal(patchResponse.status, 200);
+    const patchCommitted = await fetch(`http://127.0.0.1:${server.port}/api/work/${patchWorkId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "commit", work_id: patchWorkId })
+    });
+    assert.equal(patchCommitted.status, 200);
     await patchEventPromise;
     const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`).then((result) => result.json());
     assert.equal(scene.visuals["live-bar"].id, "live-bar");
@@ -187,7 +315,7 @@ test("creates a visual through the live web control path without restarting the 
 
 test("deletes a visual through the live web control path", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "live-delete", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
-  await runtime.visualCreate({ id: "delete-me", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 300, h: 200 } });
+  await createInWork(runtime, { id: "delete-me", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 300, h: 200 } });
   const server = await createWebServer(runtime, 0);
   try {
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
@@ -223,10 +351,10 @@ test("runs an explicit multi-stage work session through the live web control pat
     const draft = await call("/api/visual", { id: "explicit-bar", kind: "plot", title: "Orders by channel", placement: "right", work_id: workId }).then((response) => response.json());
     const inspected = await call("/api/data/inspect", { dataset: "orders", work_id: workId }).then((response) => response.json());
     const queried = await call("/api/data/query", { dataset: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, work_id: workId }).then((response) => response.json());
-    const created = await fetch(`http://127.0.0.1:${server.port}/api/visual/explicit-bar`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ work_id: workId, patch: { set: { source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }] } } }) }).then((response) => response.json());
+    const created = await fetch(`http://127.0.0.1:${server.port}/api/visual/explicit-bar`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ work_id: workId, patch: { set: { source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] } }, add_marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }] } }) }).then((response) => response.json());
     const committed = await call(`/api/work/${workId}`, { action: "commit" }).then((response) => response.json());
     assert.equal(draft.status, "working");
-    assert.deepEqual(draft.result.visual.layout, { x: 0, y: 0, w: 480, h: 320 });
+    assert.deepEqual(draft.result.visual.layout, { x: 0, y: 0, w: 720, h: 440 });
     assert.equal(inspected.status, "ok");
     assert.equal(queried.status, "ok");
     assert.equal(created.status, "rendered");
@@ -237,8 +365,21 @@ test("runs an explicit multi-stage work session through the live web control pat
     assert.ok(events.some((event) => event.type === "work.completed" && event.work_id === workId));
     const scene = await fetch(`http://127.0.0.1:${server.port}/api/scene`).then((response) => response.json());
     assert.equal(scene.visuals["explicit-bar"].id, "explicit-bar");
-    assert.deepEqual(scene.visuals["explicit-bar"].layout, { x: 0, y: 0, w: 480, h: 320 });
+    assert.deepEqual(scene.visuals["explicit-bar"].layout, { x: 0, y: 0, w: 720, h: 440 });
     socket.close();
+  } finally { await server.close(); runtime.close(); }
+});
+
+test("keeps a visible LC2 stage trail sourced from real work events", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "construction-trail", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    assert.match(html, /id="construction-status"/);
+    assert.match(html, /function recordWorkStage\(event\)/);
+    assert.match(html, /constructionStages/);
+    assert.match(html, /work\.completed.*commit/s);
+    assert.match(html, /work\.activity.*inspect|work\.activity.*query|work\.activity.*render/s);
   } finally { await server.close(); runtime.close(); }
 });
 
@@ -286,7 +427,7 @@ test("serves the keyed SVG reconciliation module to the browser", async () => {
 
 test("serves a local Plot bundle and a rendered visual payload", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "render", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
-  await runtime.visualCreate({ id: "v1", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } });
+  await createInWork(runtime, { id: "v1", kind: "plot", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "bars", type: "barY", x: "channel", y: "orders" }], layout: { x: 0, y: 0, w: 300, h: 200 } });
   const server = await createWebServer(runtime, 0);
   try {
     const rendered = await fetch(`http://127.0.0.1:${server.port}/api/visual/v1`).then((response) => response.json());
@@ -314,7 +455,7 @@ test("returns a clean error for a failed visual render without crashing the serv
 
 test("serves the primitive SVG renderer alongside Plot", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "primitive-web", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
-  await runtime.visualCreate({ id: "pie", kind: "plot", source: "orders", coordinate: { type: "polar" }, query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "slices", renderer: "primitive", type: "arc", encoding: { angle: { field: "orders" }, color: { field: "channel" } } }], layout: { x: 0, y: 0, w: 300, h: 200 } });
+  await createInWork(runtime, { id: "pie", kind: "plot", source: "orders", coordinate: { type: "polar" }, query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }] }, marks: [{ id: "slices", renderer: "primitive", type: "arc", encoding: { angle: { field: "orders" }, color: { field: "channel" } } }], layout: { x: 0, y: 0, w: 300, h: 200 } });
   const server = await createWebServer(runtime, 0);
   try {
     const rendered = await fetch(`http://127.0.0.1:${server.port}/api/visual/pie`).then((response) => response.json());

@@ -27,5 +27,19 @@ test("rejects mutating raw SQL", async () => {
   await assert.rejects(() => engine.queryRaw(orders, "DELETE FROM orders"), /query_rejected/);
   await assert.rejects(() => engine.queryRaw(orders, "SELECT * FROM orders; DELETE FROM orders"), /query_rejected/);
   await assert.rejects(() => engine.queryRaw(orders, "-- explain\nCREATE TABLE bad(x int)"), /query_rejected/);
+  await assert.rejects(() => engine.queryRaw(orders, 'WITH x AS (SELECT 1) UPDATE "orders" SET channel = channel'), /query_rejected/);
   engine.close();
+});
+
+test("streams DuckDB result chunks before the entire raw result is materialized", async () => {
+  const engine = new DuckDbEngine();
+  try {
+    const chunks = [];
+    for await (const chunk of engine.streamRaw(orders, 'SELECT a.channel AS a, b.channel AS b, c.channel AS c FROM "orders" a CROSS JOIN "orders" b CROSS JOIN "orders" c')) {
+      chunks.push(chunk);
+    }
+    assert.ok(chunks.length > 1);
+    assert.deepEqual(chunks[0].columns, ["a", "b", "c"]);
+    assert.equal(chunks.reduce((count, chunk) => count + chunk.rows.length, 0), 8_000);
+  } finally { engine.close(); }
 });

@@ -6,6 +6,9 @@ export interface QueryResult {
   rows: JsonObject[];
 }
 
+/** A physical DuckDB result chunk; rows have already crossed the database boundary. */
+export interface QueryChunk extends QueryResult {}
+
 export interface InspectOptions {
   fields?: string[];
   top_k?: number;
@@ -25,11 +28,50 @@ function quoteString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+const READ_ONLY_START = new Set(["SELECT", "WITH", "DESCRIBE", "SUMMARIZE", "EXPLAIN"]);
+const MUTATING_KEYWORDS = new Set(["ALTER", "ATTACH", "CALL", "COPY", "CREATE", "DELETE", "DETACH", "DROP", "EXPORT", "IMPORT", "INSERT", "INSTALL", "LOAD", "MERGE", "PRAGMA", "REPLACE", "RESET", "SET", "TRUNCATE", "UPDATE", "USE", "VACUUM"]);
+
+/**
+ * A small fail-closed SQL lexer. It deliberately understands only enough SQL
+ * to reject write-capable statements before DuckDB sees them; identifiers and
+ * quoted values are ignored so their text cannot accidentally look like a
+ * mutating keyword.
+ */
+function readOnlyTokens(sql: string): { tokens: string[]; statementCount: number } {
+  const tokens: string[] = [];
+  let statementCount = 0;
+  let index = 0;
+  while (index < sql.length) {
+    const char = sql[index];
+    if (/\s/.test(char)) { index += 1; continue; }
+    if (char === "-" && sql[index + 1] === "-") { index = sql.indexOf("\n", index + 2); if (index < 0) break; continue; }
+    if (char === "/" && sql[index + 1] === "*") { const end = sql.indexOf("*/", index + 2); if (end < 0) return { tokens: [], statementCount: 2 }; index = end + 2; continue; }
+    if (char === "'" || char === '"') {
+      const quote = char;
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === quote && sql[index + 1] === quote) { index += 2; continue; }
+        if (sql[index] === quote) { index += 1; break; }
+        index += 1;
+      }
+      if (index > sql.length) return { tokens: [], statementCount: 2 };
+      continue;
+    }
+    if (char === ";") { statementCount += 1; index += 1; continue; }
+    if (/[A-Za-z_]/.test(char)) {
+      const start = index;
+      while (index < sql.length && /[A-Za-z0-9_$]/.test(sql[index])) index += 1;
+      tokens.push(sql.slice(start, index).toUpperCase());
+      continue;
+    }
+    index += 1;
+  }
+  return { tokens, statementCount };
+}
+
 function isReadOnly(sql: string): boolean {
-  const normalized = sql.replaceAll(/--[^\n]*|\/\*[\s\S]*?\*\//g, "").trim().toUpperCase();
-  if (!normalized) return false;
-  const statements = normalized.split(";").map((statement) => statement.trim()).filter(Boolean);
-  return statements.length > 0 && statements.every((statement) => /^(SELECT|WITH|DESCRIBE|SUMMARIZE|EXPLAIN)\b/.test(statement));
+  const { tokens, statementCount } = readOnlyTokens(sql);
+  return statementCount <= 1 && tokens.length > 0 && READ_ONLY_START.has(tokens[0]) && !tokens.some((token) => MUTATING_KEYWORDS.has(token));
 }
 
 function jsonValue(value: unknown): JsonValue {
@@ -96,6 +138,24 @@ export class DuckDbEngine {
     return { columns: result.columnNames(), rows };
   }
 
+  async *stream(dataset: DatasetSpec, compiled: CompiledQuery): AsyncGenerator<QueryChunk> {
+    yield* this.#stream(dataset, compiled.sql, compiled.params);
+  }
+
+  async *streamRaw(dataset: DatasetSpec, sql: string): AsyncGenerator<QueryChunk> {
+    if (!isReadOnly(sql)) throw new Error("query_rejected: read-only SQL required");
+    yield* this.#stream(dataset, sql);
+  }
+
+  async count(dataset: DatasetSpec, compiled: CompiledQuery): Promise<number> {
+    return this.#count(dataset, compiled.sql, compiled.params);
+  }
+
+  async countRaw(dataset: DatasetSpec, sql: string): Promise<number> {
+    if (!isReadOnly(sql)) throw new Error("query_rejected: read-only SQL required");
+    return this.#count(dataset, sql);
+  }
+
   close(): void {
     void this.#connection?.then((connection) => connection.closeSync());
     void this.#instance?.then((instance) => instance.closeSync());
@@ -111,5 +171,23 @@ export class DuckDbEngine {
     const connection = await this.#getConnection();
     const reader = dataset.format === "csv" ? "read_csv_auto" : "read_parquet";
     await connection.run(`CREATE OR REPLACE TEMP VIEW ${quoteIdentifier(dataset.id)} AS SELECT * FROM ${reader}(${quoteString(dataset.path)})`);
+  }
+
+  async *#stream(dataset: DatasetSpec, sql: string, params?: CompiledQuery["params"]): AsyncGenerator<QueryChunk> {
+    await this.#register(dataset);
+    const connection = await this.#getConnection();
+    const result = await connection.stream(sql, params);
+    const columns = result.columnNames();
+    for await (const rows of result.yieldRowObjectJs()) {
+      yield { columns, rows: rows.map((row) => jsonValue(row) as JsonObject) };
+    }
+  }
+
+  async #count(dataset: DatasetSpec, sql: string, params?: CompiledQuery["params"]): Promise<number> {
+    await this.#register(dataset);
+    const connection = await this.#getConnection();
+    const result = await connection.run(`SELECT COUNT(*) AS "row_count" FROM (${sql}) AS "_result"`, params);
+    const [row] = await result.getRowObjectsJS();
+    return Number(row?.row_count ?? 0);
   }
 }

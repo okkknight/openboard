@@ -18,6 +18,11 @@
     button { border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--text); padding: 7px 12px; cursor: pointer; }
     button:hover { border-color: var(--accent); }
     .revision { color: var(--muted); font-variant-numeric: tabular-nums; }
+    #construction-status { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: min(48vw, 680px); padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(21,27,36,.9); color: var(--muted); font-size: 12px; }
+    #construction-status[hidden] { display: none; }
+    .construction-label { flex: 0 0 auto; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+    #construction-stages { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; }
+    .construction-stage { overflow: hidden; text-overflow: ellipsis; max-width: 150px; padding: 2px 5px; border-radius: 4px; background: var(--panel-2); }
     main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: calc(100vh - 64px); }
     main.details-hidden { grid-template-columns: minmax(0, 1fr); }
     #viewport { position: relative; overflow: auto; background: radial-gradient(circle at 1px 1px, #202b38 1px, transparent 0) 0 0 / 24px 24px; }
@@ -50,7 +55,7 @@
 <body>
   <header>
     <span class="brand">OpenBoard</span><span class="eyebrow">Data Canvas</span>
-    <span id="connection" class="status">Connecting…</span><span class="spacer"></span>
+    <span id="connection" class="status">Connecting…</span><span id="construction-status" aria-live="polite" hidden><span class="construction-label">LC2</span><span id="construction-stages"></span></span><span class="spacer"></span>
     <span id="revision" class="revision" data-testid="revision">Revision 0</span>
     <button id="show-details" type="button" aria-controls="canvas-details">Show details</button><button id="fit" type="button">Fit view</button><button id="reset" type="button">Reset view</button>
   </header>
@@ -58,13 +63,16 @@
     <section id="viewport" aria-label="Data canvas viewport"><div id="board"></div><div id="empty">No visuals yet. Ask Codex to paint the first view.</div></section>
     <aside id="canvas-details" aria-label="Canvas details" hidden><div class="details-heading"><h1>Canvas details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="false">Hide</button></div><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
   </main>
-  <script src="/assets/d3.js"></script><script src="/assets/plot.js"></script>
+  <script src="__OPENBOARD_BASE_PATH__/assets/d3.js"></script><script src="__OPENBOARD_BASE_PATH__/assets/plot.js"></script>
   <script type="module">
-    import { acceptWorkEvent } from '/assets/work-event-order.js';
-    import { createRenderIdentityRegistry } from '/assets/render-identity-registry.js';
-    import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '/assets/render-reconciler.js';
-    import { createRenderMotion } from '/assets/render-motion.js';
-    import { crossMarkTransition } from '/assets/cross-mark-transition.js';
+    import { acceptWorkEvent } from '__OPENBOARD_BASE_PATH__/assets/work-event-order.js';
+    import { createSerialTaskQueue } from '__OPENBOARD_BASE_PATH__/assets/work-event-queue.js';
+    import { createRenderIdentityRegistry } from '__OPENBOARD_BASE_PATH__/assets/render-identity-registry.js';
+    import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '__OPENBOARD_BASE_PATH__/assets/render-reconciler.js';
+    import { createRenderMotion } from '__OPENBOARD_BASE_PATH__/assets/render-motion.js?v=lc2-20260916';
+    import { crossMarkTransition } from '__OPENBOARD_BASE_PATH__/assets/cross-mark-transition.js';
+    const basePath = '__OPENBOARD_BASE_PATH__';
+    const appPath = (path) => `${basePath}${path}`;
     const board = document.querySelector('#board');
     const viewport = document.querySelector('#viewport');
     const empty = document.querySelector('#empty');
@@ -76,12 +84,17 @@
     const canvasDetails = document.querySelector('#canvas-details');
     const toggleDetails = document.querySelector('#toggle-details');
     const showDetails = document.querySelector('#show-details');
+    const constructionStatus = document.querySelector('#construction-status');
+    const constructionStages = document.querySelector('#construction-stages');
     let durableScene = null;
     let scene = null;
     let zoom = 1;
     const renderedVisualSignatures = new Map();
     const activeWorks = new Map();
     const lastSequence = new Map();
+    const socketEventQueue = createSerialTaskQueue();
+    const constructionTrails = new Map();
+    let lastConstructionTrail = null;
     const renderIdentity = createRenderIdentityRegistry();
     const renderGenerations = createRenderGenerationTracker();
 
@@ -294,18 +307,38 @@
       return merged;
     }
     const workForVisual = (id) => [...activeWorks.values()].find((work) => work.overlay.visuals?.[id] || work.overlay.removed_visual_ids?.includes(id))?.id;
-    const visualLayout = (visual) => visual.layout || { x: 0, y: 0, w: 480, h: 320 };
+    const visualLayout = (visual) => visual.layout || { x: 0, y: 0, w: 720, h: 440 };
 
-    async function render(id, workId = workForVisual(id)) {
-      const requestGeneration = renderGenerations.request(id);
-      renderMotion.begin(id, requestGeneration);
-      const url = '/api/visual/' + encodeURIComponent(id) + (workId ? `?work_id=${encodeURIComponent(workId)}` : '');
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`visual ${id} unavailable`);
-      const payload = await response.json();
-      if (!renderGenerations.accepts(id, requestGeneration)) return;
-      renderIdentity.remember(payload.result.artifact, payload.result.plot);
-      const visual = payload.result.visual;
+    function stageForWorkEvent(event) {
+      if (event.type === 'work.started') return 'begin';
+      if (event.type === 'work.visual.changed') return event.work?.overlay?.operations === 1 ? 'draft' : 'semantic patch';
+      if (event.type === 'work.render.chunk') return `data chunk ${event.payload?.chunk_index || '?'} · ${event.payload?.row_count || 0} rows`;
+      if (event.type === 'work.activity') return `${event.activity?.kind || 'activity'} ${event.activity?.status || ''}`.trim();
+      if (event.type === 'work.completed') return 'commit ✓';
+      if (event.type === 'work.cancelled') return 'cancel';
+      if (event.type === 'work.failed') return `failed: ${event.activity?.error || 'retryable'}`;
+      return null;
+    }
+    function renderConstructionTrail(trail) {
+      if (!trail) { constructionStatus.hidden = true; constructionStages.replaceChildren(); return; }
+      constructionStatus.hidden = false;
+      constructionStages.replaceChildren(...trail.stages.map((stage) => Object.assign(document.createElement('span'), { className: 'construction-stage', textContent: stage })));
+    }
+    function recordWorkStage(event) {
+      const stage = stageForWorkEvent(event);
+      if (!stage || !event.work_id) return;
+      let trail = constructionTrails.get(event.work_id);
+      if (event.type === 'work.started' || !trail) {
+        trail = { work_id: event.work_id, stages: [] };
+        constructionTrails.set(event.work_id, trail);
+      }
+      trail.stages.push(stage);
+      lastConstructionTrail = trail;
+      renderConstructionTrail(trail);
+    }
+
+    function ensureVisualCard(visual) {
+      const id = visual.id;
       let card = cardFor(id);
       let createdCard = false;
       if (!card) {
@@ -320,17 +353,47 @@
       card.querySelector('.visual-title').textContent = visual.title || id;
       applyLayout(card, visualLayout(visual));
       if (createdCard) revealNewVisual(card);
+      return card;
+    }
+
+    function workingFrame(visual, workId) {
+      const dimensions = visual.query?.dimensions?.map((item) => item.alias || item.field).join(' · ');
+      const activity = activeWorks.get(workId)?.activity?.label;
+      const frame = document.createElement('div'); frame.className = 'working-frame';
+      frame.append(Object.assign(document.createElement('strong'), { textContent: visual.title || visual.id }));
+      if (dimensions) frame.append(Object.assign(document.createElement('span'), { textContent: dimensions }));
+      if (activity) frame.append(Object.assign(document.createElement('span'), { textContent: activity }));
+      return frame;
+    }
+
+    function renderWorkingVisual(id, workId) {
+      const visual = scene?.visuals?.[id];
+      if (!visual) return;
+      const card = ensureVisualCard(visual);
+      card.querySelector('.plot').replaceChildren(workingFrame(visual, workId));
+      card.classList.toggle('is-focused', scene?.canvas?.focus === id);
+      empty.hidden = false;
+    }
+
+    async function render(id, workId = workForVisual(id), artifactGeneration) {
+      const requestGeneration = renderGenerations.request(id);
+      renderMotion.begin(id, requestGeneration);
+      const params = new URLSearchParams();
+      if (workId) params.set('work_id', workId);
+      if (artifactGeneration !== undefined) params.set('artifact_generation', String(artifactGeneration));
+      const url = appPath('/api/visual/' + encodeURIComponent(id) + (params.size ? `?${params}` : ''));
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`visual ${id} unavailable`);
+      const payload = await response.json();
+      if (!renderGenerations.accepts(id, requestGeneration)) return;
+      renderIdentity.remember(payload.result.artifact, payload.result.plot);
+      const visual = payload.result.visual;
+      const card = ensureVisualCard(visual);
       const plot = card.querySelector('.plot');
       try {
         const renderRows = plotData(payload.result.plot.data);
         if (payload.status === 'working') {
-          const dimensions = visual.query?.dimensions?.map((item) => item.alias || item.field).join(' · ');
-          const activity = activeWorks.get(workId)?.activity?.label;
-          const frame = document.createElement('div'); frame.className = 'working-frame';
-          frame.append(Object.assign(document.createElement('strong'), { textContent: visual.title || id }));
-          if (dimensions) frame.append(Object.assign(document.createElement('span'), { textContent: dimensions }));
-          if (activity) frame.append(Object.assign(document.createElement('span'), { textContent: activity }));
-          plot.replaceChildren(frame);
+          plot.replaceChildren(workingFrame(visual, workId));
         } else if (visual.kind === 'table') {
           const table = document.createElement('table'); const fields = payload.result.columns;
           const head = document.createElement('tr'); fields.forEach((field) => head.append(Object.assign(document.createElement('th'), { textContent: field }))); const thead = document.createElement('thead'); thead.append(head); table.append(thead);
@@ -372,8 +435,33 @@
       if (Object.keys(scene.visuals).some((id) => !existingIds.has(id))) fitView();
       empty.hidden = board.querySelectorAll('.visual-card').length > 0;
     }
+    async function renderAffectedVisuals(ids, workId, artifactGeneration) {
+      for (const id of [...new Set(ids)]) {
+        if (scene.visuals[id]) await render(id, workId, artifactGeneration);
+        else await removeCard(cardFor(id));
+      }
+      empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+    }
+    async function applyWorkEvent(event) {
+      if (!acceptWorkEvent(lastSequence, event)) return;
+      recordWorkStage(event);
+      const terminal = event.type === 'work.completed' || event.type === 'work.cancelled';
+      if (terminal) {
+        activeWorks.delete(event.work_id);
+        if (event.type === 'work.completed') durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
+        updateScene(mergeEffectiveScene());
+        await renderAffectedVisuals(event.affected_ids ?? [], undefined);
+        return;
+      }
+      if (event.work) activeWorks.set(event.work_id, event.work);
+      updateScene(mergeEffectiveScene());
+      const affected = event.visual_id ? [event.visual_id] : event.activity?.visual_id ? [event.activity.visual_id] : event.affected_ids ?? [];
+      const artifactGeneration = event.type === 'work.render.chunk' ? Number(event.payload?.artifact_generation) : undefined;
+      if (event.type === 'work.visual.changed' && event.visual_id) renderWorkingVisual(event.visual_id, event.work_id);
+      await renderAffectedVisuals(affected, event.work_id, artifactGeneration);
+    }
     async function reloadScene() {
-      const [nextDurable, workSnapshot] = await Promise.all([fetch('/api/scene').then((response) => response.json()), fetch('/api/works').then((response) => response.json())]);
+      const [nextDurable, workSnapshot] = await Promise.all([fetch(appPath('/api/scene')).then((response) => response.json()), fetch(appPath('/api/works')).then((response) => response.json())]);
       durableScene = nextDurable;
       activeWorks.clear();
       for (const snapshot of workSnapshot.works) activeWorks.set(snapshot.work.id, snapshot.work);
@@ -387,7 +475,7 @@
     let socket = null;
     let reconnectTimer = null;
     let reconnectDelay = 250;
-    const socketUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    const socketUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${basePath}/ws`;
     const scheduleSocketReconnect = () => {
       if (reconnectTimer !== null) return;
       reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connectSocket(); }, reconnectDelay);
@@ -409,31 +497,29 @@
         scheduleSocketReconnect();
       });
       nextSocket.addEventListener('error', () => { if (socket === nextSocket) setConnection('Connection error', false); });
-      nextSocket.addEventListener('message', async ({ data }) => {
+      nextSocket.addEventListener('message', ({ data }) => {
         const event = JSON.parse(data);
-        if (event.type.startsWith('work.')) {
-          if (!acceptWorkEvent(lastSequence, event)) return;
-          if (event.type === 'work.completed' || event.type === 'work.cancelled') {
-            activeWorks.delete(event.work_id);
-            if (event.type === 'work.completed') durableScene = await fetch('/api/scene').then((response) => response.json());
-          } else if (event.work) activeWorks.set(event.work_id, event.work);
-          await renderEffectiveScene();
-          return;
-        }
-        if (event.type === 'visual.removed' && event.visual_id) {
-          await removeCard(cardFor(event.visual_id));
-          durableScene = await fetch('/api/scene').then((response) => response.json());
-          updateScene(mergeEffectiveScene());
-          empty.hidden = board.querySelectorAll('.visual-card').length > 0;
-          return;
-        }
-        else if (event.visual_id) await render(event.visual_id);
-        if (event.type === 'layout.changed') {
-          durableScene = await fetch('/api/scene').then((response) => response.json());
-          updateScene(mergeEffectiveScene(), true);
-          return;
-        }
-        if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed') await reloadScene();
+        void socketEventQueue.enqueue(async () => {
+          if (socket !== nextSocket) return;
+          if (event.type.startsWith('work.')) {
+            await applyWorkEvent(event);
+            return;
+          }
+          if (event.type === 'visual.removed' && event.visual_id) {
+            await removeCard(cardFor(event.visual_id));
+            durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
+            updateScene(mergeEffectiveScene());
+            empty.hidden = board.querySelectorAll('.visual-card').length > 0;
+            return;
+          }
+          else if (event.visual_id) await render(event.visual_id);
+          if (event.type === 'layout.changed') {
+            durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
+            updateScene(mergeEffectiveScene(), true);
+            return;
+          }
+          if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed') await reloadScene();
+        }).catch((error) => console.error('socket event render failed', error));
       });
     }
     await reloadScene();
