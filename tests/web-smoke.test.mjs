@@ -299,6 +299,25 @@ test("serves frameless visual and annotation canvas objects", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves one accessible interaction chrome and delegated direct-manipulation bindings", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "interaction-chrome", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    const chrome = await fetch(`http://127.0.0.1:${server.port}/assets/interaction-chrome.js`).then((response) => response.text());
+    const motion = await fetch(`http://127.0.0.1:${server.port}/assets/canvas-motion.js`).then((response) => response.text());
+    assert.match(chrome, /North west resize handle/);
+    assert.match(chrome, /South east resize handle/);
+    assert.match(chrome, /aria-label/);
+    assert.match(html, /setPointerCapture/);
+    assert.match(html, /shiftKey/);
+    assert.match(html, /event\.code === 'Space'/);
+    assert.match(html, /event\.key === 'Escape'/);
+    assert.match(html, /addEventListener\('dblclick'/);
+    assert.match(motion, /reducedMotion/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("uses retained card birth and exit paths instead of reloading every visual", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "spatial-life", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
