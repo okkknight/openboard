@@ -25,4 +25,10 @@ assert.deepEqual(names, [
   "work.apply"
 ]);
 assert.equal(new Set(names).size, names.length);
+assert.deepEqual(scene.$defs.annotationStyle.properties.variant.enum, ["caption", "body", "insight", "callout"]);
+assert.equal(scene.$defs.annotation.properties.layout.$ref, "#/$defs/layout");
+const compose = tools.tools.find((tool) => tool.name === "canvas.compose").input;
+const annotate = tools.tools.find((tool) => tool.name === "canvas.annotate").input;
+assert.equal(compose.properties.layout_updates.items.$ref, "scene.schema.json#/$defs/layoutUpdate");
+assert.equal(annotate.oneOf.length, 2);
 console.log("contracts ok: scene + outputs + events, 10 unique tools");

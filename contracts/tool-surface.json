@@ -123,33 +123,65 @@
           "target": { "type": "string" },
           "targets": { "type": "array", "items": { "type": "string" } },
           "layout": { "$ref": "scene.schema.json#/$defs/layout" },
+          "layout_updates": { "type": "array", "minItems": 1, "items": { "$ref": "scene.schema.json#/$defs/layoutUpdate" } },
           "arrangement": { "enum": ["row", "column", "grid", "compact"] },
           "expected_revision": { "type": "integer", "minimum": 0 },
           "work_id": { "type": "string", "minLength": 1 }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [{
+          "not": {
+            "required": ["layout_updates"],
+            "anyOf": [{ "required": ["target"] }, { "required": ["layout"] }]
+          }
+        }]
       }
     },
     {
       "name": "canvas.annotate",
       "purpose": "Persist a plain-text analytical note on the scene or a specific visual.",
       "input": {
-        "type": "object",
-        "required": ["text"],
-        "properties": {
-          "id": { "type": "string" },
-          "target": { "type": "string" },
-          "text": { "type": "string", "minLength": 1 },
-          "anchor": {
+        "oneOf": [
+          {
             "type": "object",
-            "required": ["x", "y"],
-            "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+            "required": ["text"],
+            "properties": {
+              "mode": { "enum": ["create"] },
+              "id": { "type": "string", "minLength": 1 },
+              "target": { "type": "string", "minLength": 1 },
+              "text": { "type": "string", "minLength": 1 },
+              "anchor": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false },
+              "layout": { "$ref": "scene.schema.json#/$defs/layout" },
+              "style": { "$ref": "scene.schema.json#/$defs/annotationStyle" },
+              "expected_revision": { "type": "integer", "minimum": 0 },
+              "work_id": { "type": "string", "minLength": 1 }
+            },
             "additionalProperties": false
           },
-          "expected_revision": { "type": "integer", "minimum": 0 },
-          "work_id": { "type": "string", "minLength": 1 }
-        },
-        "additionalProperties": false
+          {
+            "type": "object",
+            "required": ["mode", "id", "patch"],
+            "properties": {
+              "mode": { "enum": ["patch"] },
+              "id": { "type": "string", "minLength": 1 },
+              "patch": {
+                "type": "object",
+                "minProperties": 1,
+                "properties": {
+                  "text": { "type": "string", "minLength": 1 },
+                  "target": { "type": ["string", "null"], "minLength": 1 },
+                  "anchor": { "oneOf": [{ "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false }, { "type": "null" }] },
+                  "layout": { "$ref": "scene.schema.json#/$defs/layout" },
+                  "style": { "$ref": "scene.schema.json#/$defs/annotationStyle" }
+                },
+                "additionalProperties": false
+              },
+              "expected_revision": { "type": "integer", "minimum": 0 },
+              "work_id": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        ]
       }
     },
     {

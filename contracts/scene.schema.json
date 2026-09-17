@@ -155,6 +155,24 @@
       },
       "additionalProperties": false
     },
+    "objectRef": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["visual", "annotation"] },
+        "id": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "layoutUpdate": {
+      "type": "object",
+      "required": ["target", "layout"],
+      "properties": {
+        "target": { "$ref": "#/$defs/objectRef" },
+        "layout": { "$ref": "#/$defs/layout" }
+      },
+      "additionalProperties": false
+    },
     "visual": {
       "type": "object",
       "required": ["id", "kind", "source", "query", "marks", "layout"],
@@ -185,7 +203,19 @@
           "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
           "additionalProperties": false
         },
+        "layout": { "$ref": "#/$defs/layout" },
+        "style": { "$ref": "#/$defs/annotationStyle" },
         "created_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "annotationStyle": {
+      "type": "object",
+      "required": ["variant"],
+      "properties": {
+        "variant": { "enum": ["caption", "body", "insight", "callout"] },
+        "align": { "enum": ["start", "center", "end"] },
+        "color_role": { "enum": ["default", "muted", "accent", "warning"] }
       },
       "additionalProperties": false
     },

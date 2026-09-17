@@ -4,6 +4,7 @@ import { TOOL_NAMES } from "../dist/mcp/server.js";
 import { toolSchemas } from "../dist/mcp/schemas.js";
 import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
 import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 
 test("adds only work.apply to the frozen MCP tool set", () => {
   assert.deepEqual(TOOL_NAMES, [
@@ -26,6 +27,53 @@ test("validates frozen tool inputs without accepting unknown properties", () => 
   assert.throws(() => toolSchemas["visual.create"].parse({ id: "not-a-draft" }), /work_id/);
   assert.throws(() => toolSchemas["visual.patch"].parse({ id: "chart", patch: {} }), /work_id/);
   assert.throws(() => toolSchemas["visual.clone"].parse({ id: "chart" }), /work_id/);
+});
+
+test("accepts typed annotation patches and atomic layout updates", () => {
+  assert.equal(toolSchemas["canvas.annotate"].parse({
+    mode: "patch",
+    id: "insight",
+    patch: { text: "Channel B drives 60%", style: { variant: "insight", align: "start" } }
+  }).mode, "patch");
+
+  const compose = toolSchemas["canvas.compose"].parse({
+    action: "move",
+    layout_updates: [
+      { target: { kind: "visual", id: "orders" }, layout: { x: 20, y: 40, w: 480, h: 320 } },
+      { target: { kind: "annotation", id: "insight" }, layout: { x: 520, y: 40, w: 280, h: 120 } }
+    ]
+  });
+  assert.equal(compose.layout_updates.length, 2);
+});
+
+test("rejects empty annotation patches and ambiguous or duplicate layout batches", () => {
+  assert.throws(() => toolSchemas["canvas.annotate"].parse({ mode: "patch", id: "a", patch: {} }));
+  assert.throws(() => toolSchemas["canvas.compose"].parse({
+    action: "move",
+    target: "orders",
+    layout: { x: 0, y: 0, w: 10, h: 10 },
+    layout_updates: [{ target: { kind: "visual", id: "orders" }, layout: { x: 1, y: 1, w: 10, h: 10 } }]
+  }));
+  assert.throws(() => toolSchemas["canvas.compose"].parse({
+    action: "move",
+    layout_updates: [
+      { target: { kind: "visual", id: "orders" }, layout: { x: 0, y: 0, w: 10, h: 10 } },
+      { target: { kind: "visual", id: "orders" }, layout: { x: 20, y: 0, w: 10, h: 10 } }
+    ]
+  }));
+});
+
+test("publishes matching scene and tool JSON contracts for canvas objects", async () => {
+  const scene = JSON.parse(await readFile(new URL("../contracts/scene.schema.json", import.meta.url), "utf8"));
+  const surface = JSON.parse(await readFile(new URL("../contracts/tool-surface.json", import.meta.url), "utf8"));
+  const annotate = surface.tools.find((tool) => tool.name === "canvas.annotate").input;
+  const compose = surface.tools.find((tool) => tool.name === "canvas.compose").input;
+
+  assert.deepEqual(scene.$defs.annotationStyle.properties.variant.enum, ["caption", "body", "insight", "callout"]);
+  assert.equal(scene.$defs.annotation.properties.layout.$ref, "#/$defs/layout");
+  assert.equal(annotate.oneOf.length, 2);
+  assert.equal(compose.properties.layout_updates.minItems, 1);
+  assert.equal(compose.properties.layout_updates.items.$ref, "scene.schema.json#/$defs/layoutUpdate");
 });
 
 test("accepts open visual grammar fields without chart-template names", () => {

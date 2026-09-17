@@ -166,13 +166,38 @@ export interface VisualSpec {
   facet?: JsonObject;
 }
 
+export interface AnnotationStyle {
+  variant: "caption" | "body" | "insight" | "callout";
+  align?: "start" | "center" | "end";
+  color_role?: "default" | "muted" | "accent" | "warning";
+}
+
 export interface AnnotationSpec {
   id: string;
   target?: string;
   text: string;
   anchor?: { x: number; y: number };
+  layout?: LayoutSpec;
+  style?: AnnotationStyle;
   created_at: string;
 }
+
+export interface AnnotationPatch {
+  text?: string;
+  target?: string | null;
+  anchor?: { x: number; y: number } | null;
+  layout?: LayoutSpec;
+  style?: AnnotationStyle;
+}
+
+export type AnnotationMutation =
+  | ({ mode?: "create" } & Omit<AnnotationSpec, "id" | "created_at"> & { id?: string })
+  | { mode: "patch"; id: string; patch: AnnotationPatch };
+
+export type CanvasAnnotateInput = AnnotationMutation & {
+  expected_revision?: number;
+  work_id?: string;
+};
 
 export interface CanvasState {
   focus?: string;
@@ -258,11 +283,22 @@ export interface HistoryRecord {
 
 export type ComposeAction = "move" | "resize" | "delete" | "focus" | "group" | "ungroup" | "arrange";
 
+export interface CanvasObjectRef {
+  kind: "visual" | "annotation";
+  id: string;
+}
+
+export interface LayoutUpdate {
+  target: CanvasObjectRef;
+  layout: LayoutSpec;
+}
+
 export interface ComposeInput {
   action: ComposeAction;
   target?: string;
   targets?: string[];
   layout?: LayoutSpec;
+  layout_updates?: LayoutUpdate[];
   arrangement?: "row" | "column" | "grid" | "compact";
 }
 
