@@ -23,8 +23,7 @@
     .construction-label { flex: 0 0 auto; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
     #construction-stages { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; }
     .construction-stage { overflow: hidden; text-overflow: ellipsis; max-width: 150px; padding: 2px 5px; border-radius: 4px; background: var(--panel-2); }
-    main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: calc(100vh - 64px); }
-    main.details-hidden { grid-template-columns: minmax(0, 1fr); }
+    main { display: grid; grid-template-columns: minmax(0, 1fr); height: calc(100vh - 64px); }
     #viewport { position: relative; overflow: auto; background: radial-gradient(circle at 1px 1px, #202b38 1px, transparent 0) 0 0 / 24px 24px; }
     #board { position: relative; min-width: 1200px; min-height: 900px; transform-origin: 0 0; }
     .canvas-object { position: absolute; overflow: visible; min-width: 80px; min-height: 48px; background: transparent; border: 0; border-radius: 0; box-shadow: none; color: inherit; }
@@ -49,10 +48,13 @@
     .object-status.has-rendered-content .working-frame { min-height: 0; padding: 0; }
     .working-frame strong { color: var(--text); font-size: 13px; font-weight: 600; }
     .visual-error { margin: 22px; color: #f39a9f; }
-    aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px; }
+    #canvas-details { position: fixed; right: 16px; top: 80px; z-index: 30; width: 300px; max-height: calc(100vh - 96px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: rgba(21,27,36,.96); padding: 18px; box-shadow: 0 18px 50px rgba(0,0,0,.32); backdrop-filter: blur(14px); }
     .details-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
     .details-heading h1 { margin: 0; font-size: 14px; }
     .details-heading button { padding: 4px 8px; font-size: 12px; }
+    .inspector-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
+    .inspector-fields label { color: var(--muted); font-size: 11px; } .inspector-fields input, .inspector-fields select { width: 100%; margin-top: 3px; background: var(--bg); color: var(--text); border: 1px solid var(--line); padding: 5px; }
+    .inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; } .diagnostics { margin-top: 14px; color: var(--muted); }
     aside p { margin: 0 0 18px; color: var(--muted); }
     .canvas-object[data-kind="annotation"] .object-title { height: 24px; font-size: 12px; color: var(--muted); }
     .canvas-object[data-kind="annotation"] .object-content { height: calc(100% - 24px); }
@@ -90,7 +92,7 @@
   </header>
   <main id="canvas-layout" class="details-hidden">
     <section id="viewport" aria-label="Data canvas viewport"><div id="board"></div><div id="empty">No visuals yet. Ask Codex to paint the first view.</div></section>
-    <aside id="canvas-details" aria-label="Canvas details" hidden><div class="details-heading"><h1>Canvas details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="false">Hide</button></div><p id="canvas-meta">Loading scene…</p><div id="annotations"></div></aside>
+    <aside id="canvas-details" aria-label="Canvas details" hidden><div class="details-heading"><h1>Object details</h1><button id="toggle-details" type="button" aria-controls="canvas-details" aria-expanded="false">Hide</button></div><p id="canvas-meta">Loading scene…</p><div class="inspector-fields"><label>X<input id="inspect-x" type="number"></label><label>Y<input id="inspect-y" type="number"></label><label>W<input id="inspect-w" type="number" min="1"></label><label>H<input id="inspect-h" type="number" min="1"></label><label>Style<select id="inspect-variant"><option>caption</option><option>body</option><option>insight</option><option>callout</option></select></label><label>Align<select id="inspect-align"><option>start</option><option>center</option><option>end</option></select></label></div><div class="inspector-actions"><button type="button" data-align="left">Align left</button><button type="button" data-align="top">Align top</button><button type="button" data-align="horizontal">Distribute</button></div><details class="diagnostics"><summary>Diagnostics</summary><code id="diagnostic-id"></code></details><div id="annotations" hidden></div></aside>
   </main>
   <script src="__OPENBOARD_BASE_PATH__/assets/d3.js"></script><script src="__OPENBOARD_BASE_PATH__/assets/plot.js"></script>
   <script type="module">
@@ -107,6 +109,7 @@
     import { createInteractionChrome } from '__OPENBOARD_BASE_PATH__/assets/interaction-chrome.js';
     import { createCanvasMotion } from '__OPENBOARD_BASE_PATH__/assets/canvas-motion.js';
     import { createCanvasCommitter } from '__OPENBOARD_BASE_PATH__/assets/canvas-commit.js';
+    import { createVisualRenderCache } from '__OPENBOARD_BASE_PATH__/assets/visual-render-cache.js';
     const basePath = '__OPENBOARD_BASE_PATH__';
     const appPath = (path) => `${basePath}${path}`;
     const board = document.querySelector('#board');
@@ -133,6 +136,7 @@
     let lastConstructionTrail = null;
     const renderIdentity = createRenderIdentityRegistry();
     const renderGenerations = createRenderGenerationTracker();
+    const visualRenderCache = createVisualRenderCache();
     const connectorLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); connectorLayer.id = 'connector-layer'; board.append(connectorLayer);
     const objectView = createCanvasObjectView({ board, renderAnnotation: renderAnnotationContent });
     const interactionChrome = createInteractionChrome(board);
@@ -144,6 +148,7 @@
       board.querySelectorAll('.canvas-object').forEach((element) => element.classList.toggle('is-selected', refs.some((ref) => element.dataset.kind === ref.kind && element.dataset.objectId === ref.id)));
       const selected = currentLayouts(refs.map((ref) => `${ref.kind}:${ref.id}`));
       interactionChrome.renderSelection(selected.size ? boundsForLayouts(selected) : null);
+      if (refs.length) { setDetailsVisible(true); renderInspector(refs); }
     };
     const postMutation = async (path, body) => { const response = await fetch(appPath(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); const payload = await response.json(); if (!response.ok) throw Object.assign(new Error(payload.error?.message || payload.status), { status: response.status, code: payload.error?.code, body: payload }); return payload; };
     const applyDurableScene = (next) => { durableScene = next; updateScene(mergeEffectiveScene(), true); };
@@ -201,8 +206,9 @@
     function fitView() {
       const cards = [...board.querySelectorAll('.canvas-object')];
       if (!cards.length) return;
-      const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width)));
-      const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height)));
+      const connectorLines = [...board.querySelectorAll('#connector-layer line')];
+      const right = Math.max(...cards.map((card) => parseFloat(card.style.left) + parseFloat(card.style.width)), ...connectorLines.flatMap((line) => [Number(line.getAttribute('x1')), Number(line.getAttribute('x2'))]));
+      const bottom = Math.max(...cards.map((card) => parseFloat(card.style.top) + parseFloat(card.style.height)), ...connectorLines.flatMap((line) => [Number(line.getAttribute('y1')), Number(line.getAttribute('y2'))]));
       const availableWidth = Math.max(1, Math.min(viewport.clientWidth, window.innerWidth));
       const availableHeight = Math.max(1, Math.min(viewport.clientHeight, window.innerHeight - 64));
       zoom = Math.min(1, (availableWidth - 48) / right, (availableHeight - 48) / bottom);
@@ -467,6 +473,7 @@
       if (!renderGenerations.accepts(id, requestGeneration)) return;
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
+      visualRenderCache.remember(id, payload);
       const card = ensureVisualCard(visual);
       const plot = card.querySelector('.plot');
       try {
@@ -498,6 +505,24 @@
       } catch (error) { const status = card.querySelector('.object-status'); status.textContent = error.message; status.hidden = false; status.classList.add('is-error'); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
       empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
+    }
+
+    function reflowCachedVisual(id, payload, layout) {
+      const visual = payload.result.visual;
+      if (visual.kind !== 'plot') return;
+      const plot = cardFor(id)?.querySelector('.plot'); if (!plot) return;
+      const rows = plotData(payload.result.plot.data); const width = Math.max(220, layout.w - 16); const height = Math.max(120, layout.h - 48);
+      const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, rows)) });
+      for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, false);
+      reconcilePlotViewport(plot, svg, visual, payload.result.artifact);
+    }
+
+    function renderInspector(refs) {
+      const keys = refs.map((ref) => `${ref.kind}:${ref.id}`); const selected = currentLayouts(keys); if (!selected.size) return;
+      const bounds = boundsForLayouts(selected); for (const field of ['x', 'y', 'w', 'h']) document.querySelector(`#inspect-${field}`).value = String(Math.round(bounds[field] * 100) / 100);
+      const first = refs[0]; const annotation = first.kind === 'annotation' ? scene?.annotations?.[first.id] : null;
+      document.querySelector('#inspect-variant').value = annotation?.style?.variant || 'body'; document.querySelector('#inspect-align').value = annotation?.style?.align || 'start';
+      document.querySelector('#diagnostic-id').textContent = refs.map((ref) => `${ref.kind}:${ref.id}`).join(', ');
     }
 
     function updateScene(next, animateLayout = false) {
@@ -551,9 +576,12 @@
       await renderEffectiveScene();
     }
     document.querySelector('#fit').addEventListener('click', fitView);
-    document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; });
+    document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; interaction.clearSelection(); });
     toggleDetails.addEventListener('click', () => setDetailsVisible(false));
     showDetails.addEventListener('click', () => setDetailsVisible(true));
+    document.querySelectorAll('#inspect-x,#inspect-y,#inspect-w,#inspect-h').forEach((input) => input.addEventListener('change', () => { const state = interaction.getState(); if (state.selection.length !== 1) return; const original = currentLayouts(state.selection); const current = original.values().next().value; const next = { x: Number(document.querySelector('#inspect-x').value), y: Number(document.querySelector('#inspect-y').value), w: Number(document.querySelector('#inspect-w').value), h: Number(document.querySelector('#inspect-h').value) }; const [kind, id] = state.selection[0].split(':'); void committer.commitLayoutGesture({ action: current.w === next.w && current.h === next.h ? 'move' : 'resize', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: [{ target: { kind, id }, layout: next }] }); }));
+    document.querySelectorAll('#inspect-variant,#inspect-align').forEach((input) => input.addEventListener('change', () => { const selected = interaction.getState().selection; if (selected.length !== 1 || !selected[0].startsWith('annotation:')) return; const id = selected[0].slice('annotation:'.length); void committer.patchAnnotation({ id, baseRevision: durableScene.revision, patch: { style: { variant: document.querySelector('#inspect-variant').value, align: document.querySelector('#inspect-align').value } } }); }));
+    document.querySelectorAll('[data-align]').forEach((button) => button.addEventListener('click', () => { const selected = interaction.getState().selection; if (selected.length < 2) return; const original = currentLayouts(selected); const items = [...original]; const bounds = boundsForLayouts(original); let cursor = bounds.x; const updates = items.map(([key, layout]) => { const [kind, id] = key.split(':'); const next = { ...layout }; if (button.dataset.align === 'left') next.x = bounds.x; if (button.dataset.align === 'top') next.y = bounds.y; if (button.dataset.align === 'horizontal') { next.x = cursor; cursor += layout.w + (bounds.w - items.reduce((sum, [, value]) => sum + value.w, 0)) / (items.length - 1); } return { target: { kind, id }, layout: next }; }); void committer.commitLayoutGesture({ action: 'move', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: updates }); }));
     let spacePressed = false;
     const screenPoint = (event) => ({ x: event.clientX, y: event.clientY });
     const canvasPoint = (event) => { const bounds = board.getBoundingClientRect(); return { x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom }; };
@@ -621,8 +649,10 @@
           }
           else if (event.visual_id) await render(event.visual_id);
           if (event.type === 'layout.changed') {
+            const before = scene;
             durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
             updateScene(mergeEffectiveScene(), true);
+            for (const target of event.affected_objects ?? []) if (target.kind === 'visual') { const previous = before?.visuals?.[target.id]?.layout; const next = scene?.visuals?.[target.id]?.layout; if (previous && next && (previous.w !== next.w || previous.h !== next.h)) visualRenderCache.reflow(target.id, next, reflowCachedVisual.bind(null, target.id)); }
             return;
           }
           if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'annotation.changed' || event.type === 'focus.changed') await reloadScene();

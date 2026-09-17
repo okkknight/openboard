@@ -252,6 +252,20 @@ test("handles layout changes without re-rendering visual data", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("reflows resized visuals from cache and keeps the inspector floating", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "cached-layout", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    const cache = await fetch(`http://127.0.0.1:${server.port}/assets/visual-render-cache.js`).then((response) => response.text());
+    assert.match(cache, /createVisualRenderCache/);
+    assert.match(html, /visualRenderCache\.reflow/);
+    assert.match(html, /#canvas-details \{ position: fixed/);
+    assert.match(html, /<details[^>]*class="diagnostics"/);
+    assert.match(html, /fitView[\s\S]*connector-layer/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("handles live work events by rendering only affected cards", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "work-card-delta", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
