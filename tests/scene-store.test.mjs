@@ -120,6 +120,57 @@ test("create, compose, and annotate each commit one scene revision", () => {
   assert.equal(store.inspect().annotations.a1.text, "Investigate this");
 });
 
+test("moves a visual and annotation atomically in one revision", () => {
+  const store = new SceneStore(seed());
+  store.annotate({ id: "note", text: "Explain B", layout: { x: 10, y: 10, w: 180, h: 80 }, created_at: "2026-09-17T00:00:00.000Z" });
+  const before = store.inspect().revision;
+
+  store.compose({ action: "move", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: { x: 40, y: 50, w: 480, h: 320 } },
+    { target: { kind: "annotation", id: "note" }, layout: { x: 540, y: 50, w: 180, h: 80 } }
+  ] }, before);
+
+  const scene = store.inspect();
+  assert.equal(scene.revision, before + 1);
+  assert.deepEqual(scene.visuals.v1.layout, { x: 40, y: 50, w: 480, h: 320 });
+  assert.deepEqual(scene.annotations.note.layout, { x: 540, y: 50, w: 180, h: 80 });
+  assert.equal(store.historyRecords().at(-1).operation, "canvas.compose");
+});
+
+test("rejects an invalid or no-op layout batch without changing scene or history", () => {
+  const store = new SceneStore(seed());
+  const before = store.inspect();
+  const historyLength = store.historyRecords().length;
+
+  assert.throws(() => store.compose({ action: "move", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: { x: 10, y: 10, w: 480, h: 320 } },
+    { target: { kind: "annotation", id: "missing" }, layout: { x: 20, y: 20, w: 180, h: 80 } }
+  ] }), /not_found: annotation missing/);
+  assert.deepEqual(store.inspect(), before);
+  assert.equal(store.historyRecords().length, historyLength);
+
+  assert.throws(() => store.compose({ action: "resize", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: before.visuals.v1.layout }
+  ] }), /no_op/);
+  assert.deepEqual(store.inspect(), before);
+  assert.equal(store.historyRecords().length, historyLength);
+});
+
+test("patches one annotation exactly once and supports clearing optional links", () => {
+  const store = new SceneStore(seed());
+  store.annotate({ id: "note", target: "v1", anchor: { x: 10, y: 20 }, text: "Before", created_at: "2026-09-17T00:00:00.000Z" });
+  const before = store.inspect().revision;
+
+  store.patchAnnotation("note", { text: "After", target: null, anchor: null, style: { variant: "insight" } }, before);
+
+  const annotation = store.inspect().annotations.note;
+  assert.equal(store.inspect().revision, before + 1);
+  assert.equal(annotation.text, "After");
+  assert.equal(annotation.target, undefined);
+  assert.equal(annotation.anchor, undefined);
+  assert.deepEqual(annotation.style, { variant: "insight" });
+});
+
 test("commits a materialized work overlay as one durable revision and history record", () => {
   const store = new SceneStore({ ...seed(), revision: 20 });
   const effective = store.inspect();

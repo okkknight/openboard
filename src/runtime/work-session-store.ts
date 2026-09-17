@@ -1,5 +1,5 @@
-import type { AnnotationSpec, CanvasState, ComposeInput, EffectiveScene, Scene, VisualPatch, WorkingOverlay, WorkingVisual, WorkingVisualDraft, WorkSession, WorkStatus } from "../core/types.js";
-import { assertValidVisualPatchPath } from "../core/scene-store.js";
+import type { AnnotationPatch, AnnotationSpec, CanvasState, ComposeInput, EffectiveScene, Scene, VisualPatch, WorkingOverlay, WorkingVisual, WorkingVisualDraft, WorkSession, WorkStatus } from "../core/types.js";
+import { applyAnnotationPatch, assertValidVisualPatchPath, layoutsEqual, normalizeLayoutUpdates } from "../core/scene-store.js";
 
 function clone<T>(value: T): T { return structuredClone(value); }
 
@@ -169,6 +169,19 @@ export class WorkSessionStore {
     return clone(work);
   }
 
+  patchAnnotation(workId: string, id: string, patch: AnnotationPatch, durable: Scene): WorkSession {
+    const work = this.#require(workId); assertActive(work);
+    const effective = this.effectiveScene(workId, durable);
+    const annotation = effective.annotations[id];
+    if (!annotation) throw new Error(`not_found: annotation ${id}`);
+    const next = applyAnnotationPatch(annotation, patch);
+    if (next.target && !effective.visuals[next.target]) throw new Error(`not_found: visual ${next.target}`);
+    work.overlay.annotations[id] = next;
+    work.overlay.operations += 1;
+    work.sequence += 1;
+    return clone(work);
+  }
+
   compose(workId: string, input: ComposeInput, durable: Scene): WorkSession {
     const work = this.#require(workId); assertActive(work);
     const effective = this.effectiveScene(workId, durable);
@@ -182,8 +195,18 @@ export class WorkSessionStore {
       if (!input.target || !effective.visuals[input.target]) throw new Error(`not_found: visual ${input.target}`);
       effective.canvas.focus = input.target;
     } else if (input.action === "move" || input.action === "resize") {
-      if (!input.target || !effective.visuals[input.target] || !input.layout) throw new Error("invalid_compose: target and layout required");
-      setVisual(input.target, { ...effective.visuals[input.target], layout: clone(input.layout) });
+      const updates = normalizeLayoutUpdates(input);
+      let changed = false;
+      for (const update of updates) {
+        const object = update.target.kind === "visual" ? effective.visuals[update.target.id] : effective.annotations[update.target.id];
+        if (!object) throw new Error(`not_found: ${update.target.kind} ${update.target.id}`);
+        if (!layoutsEqual(object.layout, update.layout)) changed = true;
+      }
+      if (input.layout_updates && !changed) throw new Error("no_op: layout batch unchanged");
+      for (const update of updates) {
+        if (update.target.kind === "visual") setVisual(update.target.id, { ...effective.visuals[update.target.id], layout: clone(update.layout) });
+        else work.overlay.annotations[update.target.id] = { ...effective.annotations[update.target.id], layout: clone(update.layout) };
+      }
     } else if (input.action === "group") {
       if (!input.target || !input.targets?.length || input.targets.some((id) => !effective.visuals[id])) throw new Error("invalid_compose: group target and targets required");
       effective.canvas.groups = (effective.canvas.groups ?? []).filter((group) => group.id !== input.target);

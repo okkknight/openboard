@@ -1,5 +1,5 @@
 import { HistoryStore, type HistoryStoreSeed } from "./history-store.js";
-import type { AnnotationSpec, ComposeInput, HistoryApplyInput, HistoryRecord, JsonValue, Scene, VisualPatch, VisualSpec } from "./types.js";
+import type { AnnotationPatch, AnnotationSpec, ComposeInput, HistoryApplyInput, HistoryRecord, JsonValue, LayoutSpec, LayoutUpdate, Scene, VisualPatch, VisualSpec } from "./types.js";
 import { normalizeScene, normalizeVisual } from "./scene-normalizer.js";
 
 export interface VisualMutationResult {
@@ -34,6 +34,39 @@ const ALLOWED_ROOTS = new Set(["title", "kind", "source", "query", "layout", "fa
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+export function layoutsEqual(left: LayoutSpec | undefined, right: LayoutSpec): boolean {
+  return Boolean(left) && left!.x === right.x && left!.y === right.y && left!.w === right.w && left!.h === right.h;
+}
+
+export function normalizeLayoutUpdates(input: ComposeInput): LayoutUpdate[] {
+  if (input.layout_updates) {
+    if (input.target !== undefined || input.layout !== undefined) throw new Error("invalid_compose: mixed layout forms");
+    if (input.layout_updates.length === 0) throw new Error("invalid_compose: layout updates required");
+    const seen = new Set<string>();
+    for (const update of input.layout_updates) {
+      const key = `${update.target.kind}:${update.target.id}`;
+      if (seen.has(key)) throw new Error(`invalid_compose: duplicate layout target ${key}`);
+      seen.add(key);
+    }
+    return input.layout_updates;
+  }
+  if (!input.target || !input.layout) throw new Error("invalid_compose: target and layout required");
+  return [{ target: { kind: "visual", id: input.target }, layout: input.layout }];
+}
+
+export function applyAnnotationPatch(annotation: AnnotationSpec, patch: AnnotationPatch): AnnotationSpec {
+  if (Object.keys(patch).length === 0) throw new Error("invalid_annotation_patch: empty patch");
+  const next = clone(annotation);
+  if (patch.text !== undefined) next.text = patch.text;
+  if (patch.target === null) delete next.target;
+  else if (patch.target !== undefined) next.target = patch.target;
+  if (patch.anchor === null) delete next.anchor;
+  else if (patch.anchor !== undefined) next.anchor = clone(patch.anchor);
+  if (patch.layout !== undefined) next.layout = clone(patch.layout);
+  if (patch.style !== undefined) next.style = clone(patch.style);
+  return next;
 }
 
 export function assertValidVisualPatchPath(path: string): void {
@@ -251,9 +284,18 @@ export class SceneStore {
         return;
       }
       if (input.action === "move" || input.action === "resize") {
-        if (!input.target || !draft.visuals[input.target]) throw new Error(`not_found: visual ${input.target}`);
-        if (!input.layout) throw new Error("invalid_compose: layout required");
-        draft.visuals[input.target].layout = clone(input.layout);
+        const updates = normalizeLayoutUpdates(input);
+        let changed = false;
+        for (const update of updates) {
+          const object = update.target.kind === "visual" ? draft.visuals[update.target.id] : draft.annotations[update.target.id];
+          if (!object) throw new Error(`not_found: ${update.target.kind} ${update.target.id}`);
+          if (!layoutsEqual(object.layout, update.layout)) changed = true;
+        }
+        if (input.layout_updates && !changed) throw new Error("no_op: layout batch unchanged");
+        for (const update of updates) {
+          if (update.target.kind === "visual") draft.visuals[update.target.id].layout = clone(update.layout);
+          else draft.annotations[update.target.id].layout = clone(update.layout);
+        }
         return;
       }
       if (input.action === "group") {
@@ -304,6 +346,17 @@ export class SceneStore {
       if (draft.annotations[annotation.id]) throw new Error(`already_exists: annotation ${annotation.id}`);
       if (annotation.target && !draft.visuals[annotation.target]) throw new Error(`not_found: visual ${annotation.target}`);
       draft.annotations[annotation.id] = clone(annotation);
+    }, expectedRevision);
+    return { revision: scene.revision };
+  }
+
+  patchAnnotation(id: string, patch: AnnotationPatch, expectedRevision?: number): SceneMutationResult {
+    const scene = this.#commit({ operation: "canvas.annotate", target: id, input: { mode: "patch", id, patch } as unknown as JsonValue }, (draft) => {
+      const annotation = draft.annotations[id];
+      if (!annotation) throw new Error(`not_found: annotation ${id}`);
+      const next = applyAnnotationPatch(annotation, patch);
+      if (next.target && !draft.visuals[next.target]) throw new Error(`not_found: visual ${next.target}`);
+      draft.annotations[id] = next;
     }, expectedRevision);
     return { revision: scene.revision };
   }

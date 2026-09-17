@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WorkSessionStore } from "../dist/runtime/work-session-store.js";
+import { SceneStore } from "../dist/core/scene-store.js";
 
 function durableScene(revision = 20) {
   return {
@@ -72,4 +73,44 @@ test("work annotations reject duplicate ids and unknown visual targets before co
 
   assert.throws(() => works.annotate(work.id, { id: "note", text: "Duplicate", created_at: "2026-09-15T00:00:00.000Z" }, durable), /already_exists: annotation note/);
   assert.throws(() => works.annotate(work.id, { id: "missing-target", target: "missing", text: "Bad", created_at: "2026-09-15T00:00:00.000Z" }, durable), /not_found: visual missing/);
+});
+
+test("batches visual and annotation layouts in one ephemeral operation and one durable revision", () => {
+  const durable = durableScene();
+  durable.visuals.v1 = visual();
+  durable.annotations.note = { id: "note", text: "Explain", layout: { x: 340, y: 0, w: 180, h: 80 }, created_at: "2026-09-17T00:00:00.000Z" };
+  const works = new WorkSessionStore();
+  const work = works.begin(durable);
+
+  works.compose(work.id, { action: "move", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: { x: 20, y: 30, w: 320, h: 200 } },
+    { target: { kind: "annotation", id: "note" }, layout: { x: 360, y: 30, w: 180, h: 80 } }
+  ] }, durable);
+
+  assert.deepEqual(durable.visuals.v1.layout, { x: 0, y: 0, w: 320, h: 200 });
+  assert.deepEqual(durable.annotations.note.layout, { x: 340, y: 0, w: 180, h: 80 });
+  const effective = works.effectiveScene(work.id, durable);
+  assert.deepEqual(effective.visuals.v1.layout, { x: 20, y: 30, w: 320, h: 200 });
+  assert.deepEqual(effective.annotations.note.layout, { x: 360, y: 30, w: 180, h: 80 });
+  assert.equal(works.get(work.id).overlay.operations, 1);
+
+  const sceneStore = new SceneStore(durable);
+  sceneStore.commitWork(works.materializeForCommit(work.id, durable), { work_id: work.id, operation_count: 1 }, durable.revision);
+  assert.equal(sceneStore.inspect().revision, durable.revision + 1);
+  assert.equal(sceneStore.historyRecords().length, 1);
+});
+
+test("patches annotations ephemerally without mutating durable state", () => {
+  const durable = durableScene();
+  durable.visuals.v1 = visual();
+  durable.annotations.note = { id: "note", target: "v1", text: "Before", created_at: "2026-09-17T00:00:00.000Z" };
+  const works = new WorkSessionStore();
+  const work = works.begin(durable);
+
+  works.patchAnnotation(work.id, "note", { text: "After", target: null, style: { variant: "callout" } }, durable);
+
+  assert.equal(durable.annotations.note.text, "Before");
+  assert.equal(works.effectiveScene(work.id, durable).annotations.note.text, "After");
+  assert.equal(works.effectiveScene(work.id, durable).annotations.note.target, undefined);
+  assert.deepEqual(works.effectiveScene(work.id, durable).annotations.note.style, { variant: "callout" });
 });
