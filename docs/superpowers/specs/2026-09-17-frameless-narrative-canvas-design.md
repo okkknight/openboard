@@ -159,6 +159,16 @@ interface AnnotationSpec {
 
 Annotations without layout remain valid. The browser derives a deterministic compatibility layout from the annotation anchor, target, or default canvas placement. The derived layout is persisted only after the annotation is moved or resized.
 
+The existing `canvas.annotate` tool remains the only annotation mutation surface. It gains an optional `mode` with backward-compatible `create` default semantics:
+
+```ts
+type CanvasAnnotateInput =
+  | { mode?: "create"; id?: string; text: string; target?: string; anchor?: Point; layout?: LayoutSpec; style?: AnnotationStyle; expected_revision?: number; work_id?: string }
+  | { mode: "patch"; id: string; patch: { text?: string; target?: string | null; anchor?: Point | null; layout?: LayoutSpec; style?: AnnotationStyle }; expected_revision?: number; work_id?: string };
+```
+
+Create mode preserves the current duplicate-ID rejection. Patch mode requires an existing annotation, applies only the supplied fields, rejects an empty patch, and commits exactly once. This keeps text editing explicit without adding another MCP tool or abusing `canvas.compose` for content changes.
+
 `canvas.compose` retains the existing single-visual form and adds an atomic batch layout form:
 
 ```ts
