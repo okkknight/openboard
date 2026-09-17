@@ -150,6 +150,39 @@ test("broadcasts scene events for composition, annotations, and history", async 
   runtime.close();
 });
 
+test("broadcasts typed affected objects for one atomic layout commit", async () => {
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "typed-layout", revision: 4, datasets: {},
+    visuals: { v1: { id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 480, h: 320 } } },
+    annotations: { a1: { id: "a1", text: "Explain", layout: { x: 500, y: 0, w: 240, h: 120 }, created_at: "2026-09-17T00:00:00.000Z" } },
+    canvas: {}
+  });
+  const events = [];
+  runtime.onEvent((event) => events.push(event));
+
+  await runtime.canvasCompose({ action: "move", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: { x: 40, y: 40, w: 480, h: 320 } },
+    { target: { kind: "annotation", id: "a1" }, layout: { x: 540, y: 40, w: 240, h: 120 } }
+  ] }, 4);
+
+  assert.deepEqual(events.at(-1).affected_objects, [
+    { kind: "visual", id: "v1" }, { kind: "annotation", id: "a1" }
+  ]);
+  assert.deepEqual(events.at(-1).affected_ids, ["v1"]);
+  assert.equal(runtime.inspect().revision, 5);
+  runtime.close();
+});
+
+test("creates and patches annotations through one explicit runtime mutation surface", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "annotation-mutation", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  await runtime.canvasAnnotate({ mode: "create", id: "a1", text: "Before", layout: { x: 0, y: 0, w: 240, h: 100 }, style: { variant: "body" } });
+  await runtime.canvasAnnotate({ mode: "patch", id: "a1", patch: { text: "After", style: { variant: "insight", align: "center" } } }, 1);
+  assert.equal(runtime.inspect().revision, 2);
+  assert.equal(runtime.inspect().annotations.a1.text, "After");
+  assert.deepEqual(runtime.inspect().annotations.a1.style, { variant: "insight", align: "center" });
+  runtime.close();
+});
+
 test("routes visual and data raw SQL through the read-only guard", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "raw", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await assert.rejects(() => runtime.dataQuery("orders", { sql: "DELETE FROM orders" }), /query_rejected/);

@@ -2,7 +2,7 @@ import { observe, type Observation } from "../core/observation.js";
 import { assertRenderable, compileQuery } from "../core/query-compiler.js";
 import { RevisionConflictError, SceneStore, type HistoryMutationResult } from "../core/scene-store.js";
 import type { HistoryStoreSeed } from "../core/history-store.js";
-import type { AnnotationSpec, ComposeInput, DatasetSpec, EffectiveScene, HistoryApplyInput, JsonObject, QuerySpec, RenderIdentityContract, Scene, VisualPatch, VisualSpec, WorkingVisual, WorkingVisualDraft, WorkActivity, WorkSession } from "../core/types.js";
+import type { AnnotationMutation, AnnotationSpec, CanvasObjectRef, ComposeInput, DatasetSpec, EffectiveScene, HistoryApplyInput, JsonObject, QuerySpec, RenderIdentityContract, Scene, VisualPatch, VisualSpec, WorkingVisual, WorkingVisualDraft, WorkActivity, WorkSession } from "../core/types.js";
 import { DuckDbEngine, type InspectOptions, type DatasetInspection } from "../data/duckdb-engine.js";
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
@@ -176,10 +176,13 @@ export class DataCanvasRuntime {
   }
 
   async canvasCompose(input: ComposeInput, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+    const affectedObjects: CanvasObjectRef[] = (input.layout_updates ?? (input.target ? [{ target: { kind: "visual", id: input.target }, layout: input.layout! }] : []))
+      .map((update) => structuredClone(update.target));
+    const affectedVisualIds = affectedObjects.filter((target) => target.kind === "visual").map((target) => target.id);
     if (workId) {
       const work = this.#works.compose(workId, input, this.#store.inspect());
-      if (input.target) this.#clearWorkArtifact(workId, input.target);
-      this.#emitWork("work.visual.changed", work, input.target);
+      for (const id of affectedVisualIds) this.#clearWorkArtifact(workId, id);
+      this.#emitWork("work.visual.changed", work, input.target, undefined, affectedVisualIds);
       return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision };
     }
     const mutation = this.#store.compose(input, expectedRevision);
@@ -187,11 +190,24 @@ export class DataCanvasRuntime {
     const scene = this.#store.inspect();
     if (input.action === "focus") this.#events.emit({ type: "focus.changed", canvas_id: scene.canvas_id, revision: mutation.revision, visual_id: input.target });
     else if (input.action === "delete") this.#events.emit({ type: "visual.removed", canvas_id: scene.canvas_id, revision: mutation.revision, visual_id: input.target });
-    else this.#events.emit({ type: "layout.changed", canvas_id: scene.canvas_id, revision: mutation.revision, affected_ids: input.targets ?? (input.target ? [input.target] : []) });
+    else this.#events.emit({ type: "layout.changed", canvas_id: scene.canvas_id, revision: mutation.revision, affected_ids: affectedVisualIds.length ? affectedVisualIds : input.targets ?? [], affected_objects: affectedObjects });
     return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
   }
 
-  async canvasAnnotate(annotation: AnnotationSpec, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+  async canvasAnnotate(input: AnnotationMutation, expectedRevision?: number, workId?: string): Promise<{ status: "ok"; canvas_id: string; revision: number }> {
+    if (input.mode === "patch") {
+      if (workId) {
+        const work = this.#works.patchAnnotation(workId, input.id, input.patch, this.#store.inspect());
+        this.#emitWork("work.visual.changed", work);
+        return { status: "ok", canvas_id: this.#store.inspect().canvas_id, revision: this.#store.inspect().revision };
+      }
+      const mutation = this.#store.patchAnnotation(input.id, input.patch, expectedRevision);
+      await this.#persist();
+      const scene = this.#store.inspect();
+      this.#events.emit({ type: "annotation.changed", canvas_id: scene.canvas_id, revision: mutation.revision, annotation_id: input.id, affected_objects: [{ kind: "annotation", id: input.id }] });
+      return { status: "ok", canvas_id: scene.canvas_id, revision: mutation.revision };
+    }
+    const annotation: AnnotationSpec = { id: input.id ?? `a${Object.keys(this.#store.inspect().annotations).length + 1}`, target: input.target, text: input.text, anchor: input.anchor, layout: input.layout, style: input.style, created_at: new Date().toISOString() };
     if (workId) {
       const work = this.#works.annotate(workId, annotation, this.#store.inspect());
       this.#emitWork("work.visual.changed", work, annotation.target);
@@ -200,7 +216,7 @@ export class DataCanvasRuntime {
     const mutation = this.#store.annotate(annotation, expectedRevision);
     await this.#persist();
     const scene = this.#store.inspect();
-    this.#events.emit({ type: "annotation.created", canvas_id: scene.canvas_id, revision: mutation.revision, annotation_id: annotation.id });
+    this.#events.emit({ type: "annotation.created", canvas_id: scene.canvas_id, revision: mutation.revision, annotation_id: annotation.id, affected_objects: [{ kind: "annotation", id: annotation.id }] });
     return { status: "ok", canvas_id: scene.canvas_id, revision: scene.revision };
   }
 

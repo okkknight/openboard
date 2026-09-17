@@ -9,7 +9,7 @@ import type { McpHttpHandler } from "@modelcontextprotocol/server";
 import { toolSchemas } from "../mcp/schemas.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
-import type { QuerySpec, VisualPatch, WorkingVisualDraft } from "../core/types.js";
+import type { AnnotationMutation, ComposeInput, QuerySpec, VisualPatch, WorkingVisualDraft } from "../core/types.js";
 
 export interface RunningWebServer { port: number; close(): Promise<void>; }
 export interface WebServerOptions { basePath?: string; mcpToken?: string; mcpPath?: string; }
@@ -168,6 +168,24 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
         const parsed = toolSchemas["visual.patch"].safeParse({ ...(body as Record<string, unknown>), id });
         if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
         json(response, 200, await runtime.visualPatch(parsed.data.id, parsed.data.patch as unknown as VisualPatch, parsed.data.expected_revision, parsed.data.work_id));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/canvas/compose") {
+      try {
+        const parsed = toolSchemas["canvas.compose"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        const { expected_revision, work_id, ...input } = parsed.data;
+        json(response, 200, await runtime.canvasCompose(input as ComposeInput, expected_revision, work_id));
+      } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/canvas/annotate") {
+      try {
+        const parsed = toolSchemas["canvas.annotate"].safeParse(await readJson(request));
+        if (!parsed.success) { json(response, 400, { status: "invalid_spec", error: parsed.error.flatten() }); return; }
+        const { expected_revision, work_id, ...input } = parsed.data;
+        json(response, 200, await runtime.canvasAnnotate(input as AnnotationMutation, expected_revision, work_id));
       } catch (error) { const result = mutationError(error); json(response, result.status, result.body); }
       return;
     }

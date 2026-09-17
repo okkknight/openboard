@@ -1,12 +1,13 @@
-import type { EffectiveScene, WorkActivity, WorkSession } from "../core/types.js";
+import type { CanvasObjectRef, EffectiveScene, WorkActivity, WorkSession } from "../core/types.js";
 
 export interface SceneEvent {
-  type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed" | "work.started" | "work.activity" | "work.visual.changed" | "work.render.chunk" | "work.completed" | "work.cancelled" | "work.failed" | "work.snapshot";
+  type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.changed" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed" | "work.started" | "work.activity" | "work.visual.changed" | "work.render.chunk" | "work.completed" | "work.cancelled" | "work.failed" | "work.snapshot";
   canvas_id: string;
   revision: number;
   visual_id?: string;
   annotation_id?: string;
   affected_ids?: string[];
+  affected_objects?: CanvasObjectRef[];
   work_id?: string;
   base_revision?: number;
   sequence?: number;

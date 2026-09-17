@@ -124,3 +124,16 @@ test("canvas.inspect exposes render capabilities", async () => {
   assert.deepEqual(payload.result.capabilities, { point_limit: 50000, marks: ["barX", "barY", "lineX", "lineY", "areaX", "areaY", "dot", "rect", "cell", "ruleX", "ruleY", "text", "tickX", "tickY", "boxX", "boxY"], primitives: ["rect", "circle", "line", "arc", "path", "text", "area"] });
   runtime.close();
 });
+
+test("routes annotation patch mode through the MCP adapter", async () => {
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "mcp-annotation", revision: 0, datasets: {}, visuals: {},
+    annotations: { a1: { id: "a1", text: "Before", created_at: "2026-09-17T00:00:00.000Z" } }, canvas: {}
+  });
+  const server = (await import("../dist/mcp/server.js")).createMcpServer(runtime);
+  const response = await server._registeredTools["canvas.annotate"].handler({ mode: "patch", id: "a1", patch: { text: "After", style: { variant: "insight" } } });
+  const payload = JSON.parse(response.content[0].text);
+  assert.equal(payload.status, "ok");
+  assert.equal(runtime.inspect().annotations.a1.text, "After");
+  runtime.close();
+});

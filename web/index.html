@@ -542,7 +542,7 @@
             updateScene(mergeEffectiveScene(), true);
             return;
           }
-          if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'focus.changed') await reloadScene();
+          if (event.type === 'history.changed' || event.type === 'annotation.created' || event.type === 'annotation.changed' || event.type === 'focus.changed') await reloadScene();
         }).catch((error) => console.error('socket event render failed', error));
       });
     }

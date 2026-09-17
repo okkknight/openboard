@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import type { DataCanvasRuntime } from "../runtime/data-canvas-runtime.js";
-import type { AnnotationSpec, ComposeInput, HistoryApplyInput, QuerySpec, VisualPatch, VisualSpec, WorkingVisualDraft } from "../core/types.js";
+import type { AnnotationMutation, ComposeInput, HistoryApplyInput, QuerySpec, VisualPatch, VisualSpec, WorkingVisualDraft } from "../core/types.js";
 import { toolSchemas } from "./schemas.js";
 import { SUPPORTED_MARKS, SUPPORTED_PRIMITIVES } from "../render/plot-compiler.js";
 
@@ -86,8 +86,10 @@ export function createMcpServer(runtime: DataCanvasRuntime): McpServer {
         }
         if (name === "canvas.compose") return textResult(await runtime.canvasCompose(request as unknown as ComposeInput, request.expected_revision as number | undefined, request.work_id as string | undefined));
         if (name === "canvas.annotate") {
-          const annotation: AnnotationSpec = { id: String(request.id ?? `a${Object.keys(runtime.inspect().annotations).length + 1}`), target: request.target as string | undefined, text: String(request.text), anchor: request.anchor as AnnotationSpec["anchor"], created_at: new Date().toISOString() };
-          return textResult(await runtime.canvasAnnotate(annotation, request.expected_revision as number | undefined, request.work_id as string | undefined));
+          const mutation = request.mode === "patch"
+            ? { mode: "patch" as const, id: String(request.id), patch: request.patch as Extract<AnnotationMutation, { mode: "patch" }>["patch"] }
+            : { mode: request.mode as "create" | undefined, id: request.id as string | undefined, target: request.target as string | undefined, text: String(request.text), anchor: request.anchor as Extract<AnnotationMutation, { mode?: "create" }>["anchor"], layout: request.layout as Extract<AnnotationMutation, { mode?: "create" }>["layout"], style: request.style as Extract<AnnotationMutation, { mode?: "create" }>["style"] };
+          return textResult(await runtime.canvasAnnotate(mutation, request.expected_revision as number | undefined, request.work_id as string | undefined));
         }
         if (name === "history.apply") return textResult(await runtime.historyApply(request as unknown as HistoryApplyInput));
         if (name === "work.apply") return textResult(await runtime.workApply({ action: request.action as "begin" | "commit" | "cancel", work_id: request.work_id as string | undefined }));

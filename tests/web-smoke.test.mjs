@@ -27,6 +27,36 @@ test("serves the current durable scene snapshot", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("commits layout batches and annotation patches through strict HTTP endpoints", async () => {
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "browser-mutations", revision: 3, datasets: {},
+    visuals: { v1: { id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 300, h: 200 } } },
+    annotations: { a1: { id: "a1", text: "Before", layout: { x: 320, y: 0, w: 180, h: 80 }, created_at: "2026-09-17T00:00:00.000Z" } },
+    canvas: {}
+  });
+  const server = await createWebServer(runtime, 0);
+  const post = (path, body) => fetch(`http://127.0.0.1:${server.port}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+  });
+  try {
+    const composed = await post("/api/canvas/compose", { action: "move", expected_revision: 3, layout_updates: [
+      { target: { kind: "visual", id: "v1" }, layout: { x: 20, y: 20, w: 300, h: 200 } },
+      { target: { kind: "annotation", id: "a1" }, layout: { x: 340, y: 20, w: 180, h: 80 } }
+    ] });
+    assert.equal(composed.status, 200);
+    assert.equal((await composed.json()).revision, 4);
+
+    const stale = await post("/api/canvas/compose", { action: "move", target: "v1", layout: { x: 40, y: 40, w: 300, h: 200 }, expected_revision: 3 });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).error.code, "revision_conflict");
+
+    const patched = await post("/api/canvas/annotate", { mode: "patch", id: "a1", patch: { text: "After", style: { variant: "callout" } }, expected_revision: 4 });
+    assert.equal(patched.status, 200);
+    assert.equal(runtime.inspect().annotations.a1.text, "After");
+    assert.deepEqual(runtime.inspect().annotations.a1.style, { variant: "callout" });
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves a deployment health check with the current canvas revision", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "health", revision: 3, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
