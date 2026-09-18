@@ -1,3 +1,5 @@
+import { createMotionPolicy } from './motion-policy.js';
+
 const FAMILY = new Map([
   ['barX', 'bar'], ['barY', 'bar'], ['rect', 'bar'], ['cell', 'bar'], ['box', 'bar'],
   ['dot', 'dot'], ['circle', 'dot'], ['ruleX', 'rule'], ['ruleY', 'rule'], ['line', 'rule'],
@@ -43,7 +45,7 @@ function waitForAnimation(element, keyframes, options, current, register) {
   });
 }
 
-function tweenGeometry(element, from, current) {
+function tweenGeometry(element, from, current, duration = 220) {
   const target = captureGeometry(element);
   const pairs = Object.entries(target)
     .map(([name, value]) => [name, Number(from[name]), Number(value)])
@@ -54,7 +56,7 @@ function tweenGeometry(element, from, current) {
     const started = performance.now();
     const frame = (now) => {
       if (!current()) return resolve();
-      const progress = Math.min(1, (now - started) / 220);
+      const progress = Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - progress, 3);
       for (const [name, oldValue, newValue] of pairs) element.setAttribute(name, String(oldValue + (newValue - oldValue) * eased));
       if (progress < 1) requestAnimationFrame(frame); else resolve();
@@ -63,7 +65,7 @@ function tweenGeometry(element, from, current) {
   });
 }
 
-export function createRenderMotion({ reduced = () => false } = {}) {
+export function createRenderMotion({ reduced = () => false, hidden = () => false, maxAnimatedElements = 120, policy = createMotionPolicy({ reduced, hidden, maxAnimatedElements }) } = {}) {
   const latest = new Map();
   const animations = new Map();
   const current = (visualId, generation) => latest.get(visualId) === generation;
@@ -78,24 +80,26 @@ export function createRenderMotion({ reduced = () => false } = {}) {
         animations.delete(animationKey);
       }
     },
-    async apply({ visualId, generation, operation, markType, element, from = {}, index = 0 }) {
-      if (!element || !current(visualId, generation) || reduced()) return;
+    async apply({ visualId, generation, operation, markType, element, from = {}, index = 0, elementCount = 1, phase = 'semantic-update' }) {
+      if (!element || !current(visualId, generation)) return;
       const strategy = motionStrategy(operation.type, markType);
+      const decision = policy.forOperation({ phase, operation: operation.type, family: strategy.family, index, elementCount });
+      if (!decision.animate) return;
       const active = () => current(visualId, generation);
       const register = (animation) => animations.set(`${key(visualId, generation)}:${animations.size}`, animation);
-      const delay = operation.type === 'enter' && index < 6 ? Math.min(index * 24, 120) : 0;
+      const delay = decision.delay;
       if (operation.type === 'update') {
-        if (strategy.action === 'geometry-update') await tweenGeometry(element, from, active);
-        else await waitForAnimation(element, [{ opacity: 0.55 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }, active, register);
+        if (decision.mode === 'geometry-update' && strategy.action === 'geometry-update') await tweenGeometry(element, from, active, decision.duration);
+        else await waitForAnimation(element, [{ opacity: 0.55 }, { opacity: 1 }], { duration: decision.duration, easing: decision.easing }, active, register);
         return;
       }
       const preservesSvgTransform = element instanceof SVGElement && element.hasAttribute('transform');
-      const frames = motionFrames(operation.type, markType, preservesSvgTransform);
+      const frames = decision.mode === 'opacity-only' ? (operation.type === 'enter' ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }]) : motionFrames(operation.type, markType, preservesSvgTransform);
       if (!preservesSvgTransform) {
         element.style.transformBox = 'fill-box';
         element.style.transformOrigin = strategy.family === 'bar' || strategy.family === 'area' ? 'center bottom' : 'center';
       }
-      await waitForAnimation(element, frames, { duration: 220, delay, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both' }, active, register);
+      await waitForAnimation(element, frames, { duration: decision.duration, delay, easing: decision.easing, fill: 'both' }, active, register);
       if (!preservesSvgTransform) element.style.transform = '';
       element.style.opacity = '';
     }

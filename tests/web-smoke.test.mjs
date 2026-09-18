@@ -90,6 +90,16 @@ test("serves the canvas shell and module assets when a release query string is p
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves the shared motion policy as a browser module", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "motion-policy", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/assets/motion-policy.js`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /createMotionPolicy/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves the pure canvas geometry module", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "geometry-asset", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
