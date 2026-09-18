@@ -69,3 +69,19 @@ test("describes schema independently and refreshes a registered view after the f
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("guards query output with limit plus one and never returns truncated rows", async () => {
+  const engine = new DuckDbEngine();
+  try {
+    const profile = await engine.describeSchema(orders);
+    const compiled = compileQuery("orders", profile.map((column) => column.name), {});
+    const exceeded = await engine.queryGuarded(orders, compiled, 3);
+    assert.equal(exceeded.exceeded, true);
+    assert.deepEqual(exceeded.rows, []);
+
+    const safeQuery = compileQuery("orders", profile.map((column) => column.name), { limit: 3 });
+    const safe = await engine.queryGuarded(orders, safeQuery, 3);
+    assert.equal(safe.exceeded, false);
+    assert.equal(safe.rows.length, 3);
+  } finally { engine.close(); }
+});

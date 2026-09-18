@@ -7,6 +7,8 @@ export interface QueryResult {
   rows: JsonObject[];
 }
 
+export interface GuardedQueryResult extends QueryResult { exceeded: boolean; }
+
 /** A physical DuckDB result chunk; rows have already crossed the database boundary. */
 export interface QueryChunk extends QueryResult {}
 
@@ -154,6 +156,15 @@ export class DuckDbEngine {
     return { columns: result.columnNames(), rows };
   }
 
+  async queryGuarded(dataset: DatasetSpec, compiled: CompiledQuery, maxRows: number): Promise<GuardedQueryResult> {
+    return this.#queryGuarded(dataset, compiled.sql, maxRows, compiled.params);
+  }
+
+  async queryRawGuarded(dataset: DatasetSpec, sql: string, maxRows: number): Promise<GuardedQueryResult> {
+    if (!isReadOnly(sql)) throw new Error("query_rejected: read-only SQL required");
+    return this.#queryGuarded(dataset, sql, maxRows);
+  }
+
   async *stream(dataset: DatasetSpec, compiled: CompiledQuery): AsyncGenerator<QueryChunk> {
     yield* this.#stream(dataset, compiled.sql, compiled.params);
   }
@@ -208,5 +219,15 @@ export class DuckDbEngine {
     const result = await connection.run(`SELECT COUNT(*) AS "row_count" FROM (${sql}) AS "_result"`, params);
     const [row] = await result.getRowObjectsJS();
     return Number(row?.row_count ?? 0);
+  }
+
+  async #queryGuarded(dataset: DatasetSpec, sql: string, maxRows: number, params?: CompiledQuery["params"]): Promise<GuardedQueryResult> {
+    if (!Number.isSafeInteger(maxRows) || maxRows < 1) throw new Error("invalid_query_limit");
+    await this.#register(dataset);
+    const connection = await this.#getConnection();
+    const result = await connection.run(`SELECT * FROM (${sql}) AS "_guarded" LIMIT ${maxRows + 1}`, params);
+    const rows = (await result.getRowObjectsJS()).map((row) => jsonValue(row) as JsonObject);
+    if (rows.length > maxRows) return { columns: result.columnNames(), rows: [], exceeded: true };
+    return { columns: result.columnNames(), rows, exceeded: false };
   }
 }

@@ -23,24 +23,29 @@ async function waitFor(check) {
 
 class SlowQueryEngine extends DuckDbEngine {
   constructor(gate) { super(); this.gate = gate; this.queries = 0; }
-  async *stream(dataset, compiled) {
+  async queryGuarded(dataset, compiled, maxRows) {
     this.queries += 1;
     await this.gate.promise;
-    yield* super.stream(dataset, compiled);
+    return super.queryGuarded(dataset, compiled, maxRows);
   }
 }
 
 class CountingQueryEngine extends DuckDbEngine {
   constructor() { super(); this.queries = 0; }
-  async *stream(dataset, compiled) { this.queries += 1; yield* super.stream(dataset, compiled); }
+  async queryGuarded(dataset, compiled, maxRows) { this.queries += 1; return super.queryGuarded(dataset, compiled, maxRows); }
+}
+
+class CountingArtifactEngine extends DuckDbEngine {
+  constructor() { super(); this.executions = 0; }
+  async queryGuarded(dataset, compiled, maxRows) { this.executions += 1; return super.queryGuarded(dataset, compiled, maxRows); }
+  async queryRawGuarded(dataset, sql, maxRows) { this.executions += 1; return super.queryRawGuarded(dataset, sql, maxRows); }
 }
 
 class GatedStreamingEngine extends DuckDbEngine {
   constructor(gate) { super(); this.gate = gate; }
-  async *stream() {
-    yield { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }] };
+  async queryGuarded() {
     await this.gate.promise;
-    yield { columns: ["channel", "orders"], rows: [{ channel: "B", orders: 12 }] };
+    return { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }, { channel: "B", orders: 12 }], exceeded: false };
   }
 }
 
@@ -253,7 +258,20 @@ test("returns a work render artifact without issuing a second DuckDB query", asy
   runtime.close();
 });
 
-test("publishes a renderable work artifact for each real DuckDB stream chunk", async () => {
+test("reuses a data query artifact when the same work session renders it", async () => {
+  const engine = new CountingArtifactEngine();
+  const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine });
+  const work = await runtime.workApply({ action: "begin" });
+  const visual = fullVisual();
+
+  await runtime.dataQuery("orders", visual.query, work.result.work_id);
+  await runtime.visualCreate(visual, undefined, work.result.work_id);
+
+  assert.equal(engine.executions, 1);
+  runtime.close();
+});
+
+test("retains the draft until a guarded query is known to be safe", async () => {
   const gate = deferred();
   const runtime = new DataCanvasRuntime(scene(), undefined, undefined, { engine: new GatedStreamingEngine(gate) });
   const events = [];
@@ -261,23 +279,19 @@ test("publishes a renderable work artifact for each real DuckDB stream chunk", a
   const work = await runtime.workApply({ action: "begin" });
   const creating = runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
 
-  await waitFor(() => events.some((event) => event.type === "work.render.chunk"));
-  const chunk = events.find((event) => event.type === "work.render.chunk");
-  const partial = await runtime.renderVisual("channel-orders", work.result.work_id, chunk.payload.artifact_generation);
-  assert.equal(partial.result.rows, 1);
-  assert.equal(partial.result.artifact.stream_state, "partial");
+  await new Promise((resolvePromise) => setImmediate(resolvePromise));
+  assert.equal(events.some((event) => event.type === "work.render.chunk"), false);
   assert.equal(events.some((event) => event.type === "work.activity" && event.activity?.status === "completed"), false);
 
   gate.release();
   const completed = await creating;
   assert.equal(completed.result.rows, 2);
   assert.equal(completed.result.artifact.stream_state, "complete");
-  assert.ok(completed.result.artifact.generation > partial.result.artifact.generation);
-  assert.equal(events.filter((event) => event.type === "work.render.chunk").length, 2);
+  assert.equal(events.filter((event) => event.type === "work.render.chunk").length, 1);
   runtime.close();
 });
 
-test("streams the real orders aggregation as progressive artifacts before the final render", async () => {
+test("publishes one safe artifact for an unbounded aggregation", async () => {
   const runtime = new DataCanvasRuntime(scene());
   const events = [];
   runtime.onEvent((event) => events.push(event));
@@ -286,9 +300,7 @@ test("streams the real orders aggregation as progressive artifacts before the fi
   const chunks = events.filter((event) => event.type === "work.render.chunk");
 
   const rowCounts = chunks.map((event) => event.payload.row_count);
-  assert.ok(rowCounts.length > 1);
-  assert.equal(rowCounts.at(-1), 4);
-  assert.ok(rowCounts.every((count, index) => index === 0 || count > rowCounts[index - 1]));
+  assert.deepEqual(rowCounts, [4]);
   assert.equal(result.result.rows, 4);
   const finalChanged = events.findLastIndex((event) => event.type === "work.visual.changed");
   assert.ok(chunks.at(-1).sequence < events[finalChanged].sequence);

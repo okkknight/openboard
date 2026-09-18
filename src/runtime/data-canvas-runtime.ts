@@ -8,6 +8,7 @@ import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
 import { Persistence } from "./persistence.js";
 import { createTrace, type PerformanceTrace } from "./performance-trace.js";
+import { QueryArtifactStore, type QueryArtifact } from "./query-artifact-store.js";
 import { WorkSessionStore } from "./work-session-store.js";
 
 export interface RuntimeResult {
@@ -52,6 +53,7 @@ export class DataCanvasRuntime {
   #artifactGenerations = new Map<string, number>();
   #streamArtifactGenerations = new Map<string, number>();
   #traces = new Map<string, PerformanceTrace>();
+  #queryArtifacts = new QueryArtifactStore();
   #persistence?: Persistence;
   #pointLimit: number;
 
@@ -84,6 +86,7 @@ export class DataCanvasRuntime {
     if (input.action === "cancel") {
       const cancelled = this.#works.cancel(input.work_id);
       this.#clearWorkArtifacts(cancelled.id);
+      this.#queryArtifacts.clearWork(cancelled.id);
       this.#emitWork("work.cancelled", cancelled, undefined, undefined, this.#affectedVisualIds(cancelled));
       this.#traces.delete(cancelled.id);
       return this.#workResult(cancelled);
@@ -109,6 +112,7 @@ export class DataCanvasRuntime {
     const completed = this.#works.complete(work.id);
     this.#traces.get(work.id)?.mark("work_committed");
     this.#emitWork("work.completed", completed, undefined, mutation.revision, affectedIds);
+    this.#queryArtifacts.clearWork(work.id);
     this.#traces.delete(work.id);
     return { status: "ok", canvas_id: durable.canvas_id, revision: mutation.revision, result: { work_id: completed.id, base_revision: completed.base_revision, sequence: completed.sequence } };
   }
@@ -120,13 +124,8 @@ export class DataCanvasRuntime {
 
   async dataQuery(id: string, query: QuerySpec, workId?: string): Promise<{ columns: string[]; data: JsonObject[]; observation: Observation }> {
     const execute = async () => {
-      const dataset = this.#dataset(id);
-      const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
-      const compiled = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], query);
-      const result = query.sql ? await this.#engine.queryRaw(dataset, compiled.sql) : await this.#engine.query(dataset, compiled);
-      const numericFields = (query.measures ?? []).map((measure) => measure.alias);
-      const categoryFields = (query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
-      return { columns: result.columns, data: result.rows, observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
+      const artifact = await this.#queryArtifact(id, query, workId);
+      return { columns: artifact.columns, data: artifact.rows, observation: artifact.observation };
     };
     return workId ? this.#withActivity(workId, "query", `Querying ${id}`, execute) : execute();
   }
@@ -304,33 +303,15 @@ export class DataCanvasRuntime {
   }
 
   async #renderStream(key: string, visual: VisualSpec, revision: number, workId: string): Promise<RenderArtifact> {
-    const dataset = this.#dataset(visual.source);
-    const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
-    const query = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], visual.query);
-    const rowCount = visual.query.sql ? await this.#engine.countRaw(dataset, query.sql) : await this.#engine.count(dataset, query);
-    assertRenderable(rowCount, this.#pointLimit, visual.query.sample);
-    const stream = visual.query.sql ? this.#engine.streamRaw(dataset, query.sql) : this.#engine.stream(dataset, query);
-    const rows: JsonObject[] = [];
-    let columns: string[] = [];
-    let artifact: RenderArtifact | undefined;
-    let chunkIndex = 0;
-    for await (const chunk of stream) {
-      chunkIndex += 1;
-      columns = chunk.columns;
-      rows.push(...chunk.rows);
-      assertRenderable(rows.length, this.#pointLimit, visual.query.sample);
-      artifact = this.#streamArtifact(key, visual, revision, rows, columns, "partial");
-      const changed = this.#works.next(workId);
-      this.#emitWork("work.render.chunk", changed, visual.id, undefined, undefined, {
-        artifact_generation: artifact.generation,
-        chunk_index: chunkIndex,
-        row_count: rows.length
-      });
-      // Yield the event loop so the browser can receive this WebSocket frame and
-      // request its immutable artifact before DuckDB advances to the next chunk.
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    return this.#streamArtifact(key, visual, revision, rows, columns, "complete");
+    const queryArtifact = await this.#queryArtifact(visual.source, visual.query, workId);
+    const artifact = this.#streamArtifact(key, visual, revision, queryArtifact.rows, queryArtifact.columns, "complete");
+    const changed = this.#works.next(workId);
+    this.#emitWork("work.render.chunk", changed, visual.id, undefined, undefined, {
+      artifact_generation: artifact.generation,
+      chunk_index: 1,
+      row_count: queryArtifact.rows.length
+    });
+    return artifact;
   }
 
   #streamArtifact(key: string, visual: VisualSpec, revision: number, rows: JsonObject[], columns: string[], streamState: RenderArtifact["stream_state"]): RenderArtifact {
@@ -343,14 +324,31 @@ export class DataCanvasRuntime {
   }
 
   async #render(visual: VisualSpec): Promise<RenderPayload> {
-    const dataset = this.#dataset(visual.source);
-    const profile = await this.#engine.inspect(dataset, { fields: [], sample_rows: 0 });
-    const query = compileQuery(dataset.id, profile.columns?.map((column) => column.name) ?? [], visual.query);
-    const result = visual.query.sql ? await this.#engine.queryRaw(dataset, query.sql) : await this.#engine.query(dataset, query);
-    assertRenderable(result.rows.length, this.#pointLimit, visual.query.sample);
-    const numericFields = (visual.query.measures ?? []).map((measure) => measure.alias);
-    const categoryFields = (visual.query.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
-    return { rows: result.rows, columns: result.columns, plot: compilePlot(visual, result.rows), observation: observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] }) };
+    const result = await this.#queryArtifact(visual.source, visual.query);
+    return { rows: result.rows, columns: result.columns, plot: compilePlot(visual, result.rows), observation: result.observation };
+  }
+
+  async #queryArtifact(datasetId: string, querySpec: QuerySpec, workId?: string): Promise<QueryArtifact> {
+    const dataset = this.#dataset(datasetId);
+    const fingerprint = await this.#engine.fingerprint(dataset);
+    const execute = async () => {
+      const columns = await this.#engine.describeSchema(dataset);
+      this.#traces.get(workId ?? "")?.mark("schema_ready", { cache_hit: false });
+      const compiled = compileQuery(dataset.id, columns.map((column) => column.name), querySpec);
+      this.#traces.get(workId ?? "")?.mark("query_started");
+      const result = querySpec.sql
+        ? await this.#engine.queryRawGuarded(dataset, compiled.sql, this.#pointLimit)
+        : await this.#engine.queryGuarded(dataset, compiled, this.#pointLimit);
+      if (result.exceeded) assertRenderable(this.#pointLimit + 1, this.#pointLimit, querySpec.sample);
+      const numericFields = (querySpec.measures ?? []).map((measure) => measure.alias);
+      const categoryFields = (querySpec.dimensions ?? []).map((dimension) => dimension.alias ?? (dimension.time_grain ? `${dimension.field}_${dimension.time_grain}` : dimension.field));
+      const observation = observe(result.rows, { numericFields, categoryFields, orderField: categoryFields[0] });
+      this.#traces.get(workId ?? "")?.mark("query_completed", { output_rows: result.rows.length });
+      return { columns: result.columns, rows: result.rows, observation };
+    };
+    if (workId) return this.#queryArtifacts.getOrExecute(workId, fingerprint.key, querySpec, execute);
+    const result = await execute();
+    return { ...result, dataset_fingerprint: fingerprint.key, query_key: JSON.stringify(querySpec), state: "complete" };
   }
 
   #dataset(id: string): DatasetSpec {
