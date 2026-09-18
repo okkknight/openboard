@@ -235,7 +235,7 @@
     const primitiveColor = (value, index) => typeof value === 'string' && /^(#|rgb\(|hsl\(|transparent$|currentColor$)/i.test(value) ? value : primitivePalette[index % primitivePalette.length];
     const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
     const motionReduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const renderMotion = createRenderMotion({ reduced: motionReduced });
+    const renderMotion = createRenderMotion({ reduced: motionReduced, hidden: () => document.hidden });
     const easeOut = (progress) => 1 - Math.pow(1 - progress, 3);
     const visualSignature = (visual) => JSON.stringify({ kind: visual.kind, source: visual.source, query: visual.query, coordinate: visual.coordinate, marks: visual.marks });
     const shouldAnimateVisual = (visual) => {
@@ -472,6 +472,9 @@
       if (!response.ok) throw new Error(`visual ${id} unavailable`);
       const payload = await response.json();
       if (!renderGenerations.accepts(id, requestGeneration)) return;
+      const previousPayload = visualRenderCache.get(id);
+      const motionPhase = payload.status === 'working' ? 'draft' : previousPayload ? 'semantic-update' : 'data-enter';
+      const motionElementCount = (payload.result.artifact?.identity?.marks || []).reduce((total, mark) => total + (mark.render_keys?.length || 0), 0);
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
       visualRenderCache.remember(id, payload);
@@ -493,12 +496,12 @@
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, false);
           reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
-            onEnter: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index }),
-            onUpdate: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index }),
-            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index }),
+            onEnter: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
+            onUpdate: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
+            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
             onReplaceLayer: (element, nextLayer, operation, meta) => {
               element.dataset.transition = crossMarkTransition(meta.fromMarkType, meta.markType).kind;
-              return renderMotion.apply({ visualId: id, generation: requestGeneration, operation: { ...operation, type: 'exit' }, markType: meta.fromMarkType, element, index: meta.index });
+              return renderMotion.apply({ visualId: id, generation: requestGeneration, operation: { ...operation, type: 'exit' }, markType: meta.fromMarkType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase });
             }
           });
         }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRenderGenerationTracker, planRenderOperations } from "../web/render-reconciler.js";
+import { createRenderGenerationTracker, planRenderOperations, summarizeRenderOperations } from "../web/render-reconciler.js";
 
 const layer = (keys, identityMode = "datum", markType = "bar") => ({
   mark_id: "bars",
@@ -64,4 +64,21 @@ test("rejects a stale visual response before it can write DOM", () => {
   const second = generations.request("orders");
   assert.equal(generations.accepts("orders", first), false);
   assert.equal(generations.accepts("orders", second), true);
+});
+
+test("summarizes retained, entered, exited, and replaced identities for motion", () => {
+  const summary = summarizeRenderOperations([
+    { type: "replace-axes" },
+    { type: "update", mark_id: "bars", key: "A" },
+    { type: "enter", mark_id: "bars", key: "C" },
+    { type: "exit", mark_id: "bars", key: "B" },
+    { type: "replace-layer", mark_id: "trend" }
+  ]);
+  assert.deepEqual(summary, {
+    retainedKeys: ["bars:A"],
+    enteredKeys: ["bars:C"],
+    exitedKeys: ["bars:B"],
+    replacedLayers: ["trend"],
+    elementCount: 3
+  });
 });

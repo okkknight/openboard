@@ -152,6 +152,17 @@ export function annotateDetachedPlotLayer(group, mark) {
   return group;
 }
 
+export function summarizeRenderOperations(operations) {
+  const keyed = (type) => operations.filter((operation) => operation.type === type && operation.key).map((operation) => `${operation.mark_id}:${operation.key}`);
+  return Object.freeze({
+    retainedKeys: Object.freeze(keyed('update')),
+    enteredKeys: Object.freeze(keyed('enter')),
+    exitedKeys: Object.freeze(keyed('exit')),
+    replacedLayers: Object.freeze(operations.filter((operation) => operation.type === 'replace-layer').map((operation) => operation.mark_id)),
+    elementCount: operations.filter((operation) => ['enter', 'update', 'exit'].includes(operation.type)).length
+  });
+}
+
 export function reconcilePlotViewport(container, nextSvg, visual, artifact, { onEnter = () => {}, onUpdate = () => {}, onExit = () => {}, onReplaceLayer = () => {} } = {}) {
   let viewport = container.querySelector('svg[data-visual-id]');
   if (!viewport || viewport.dataset.visualId !== visual.id) {
@@ -165,7 +176,7 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
         void onEnter(node.element, operation, { markType: layer.dataset.markType, index: operations.length - 1 });
       }
     }
-    return { viewport, initial: true, operations };
+    return { viewport, initial: true, operations, summary: summarizeRenderOperations(operations) };
   }
 
   const next = stableViewport(nextSvg, visual.id, artifact);
@@ -245,5 +256,5 @@ export function reconcilePlotViewport(container, nextSvg, visual, artifact, { on
     }
     if (operation.type === 'exit' && currentNode) Promise.resolve(onExit(currentNode, operation, { markType, index: operationIndex++ })).then(() => currentNode.remove());
   }
-  return { viewport, initial: false, operations };
+  return { viewport, initial: false, operations, summary: summarizeRenderOperations(operations) };
 }
