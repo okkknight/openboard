@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { join } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { DuckDbEngine } from "../dist/data/duckdb-engine.js";
 import { compileQuery } from "../dist/core/query-compiler.js";
 
@@ -42,4 +45,27 @@ test("streams DuckDB result chunks before the entire raw result is materialized"
     assert.deepEqual(chunks[0].columns, ["a", "b", "c"]);
     assert.equal(chunks.reduce((count, chunk) => count + chunk.rows.length, 0), 8_000);
   } finally { engine.close(); }
+});
+
+test("describes schema independently and refreshes a registered view after the file changes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openboard-metadata-"));
+  const path = join(root, "changing.csv");
+  const engine = new DuckDbEngine();
+  try {
+    await writeFile(path, "name,value\nA,1\n", "utf8");
+    const dataset = { id: "changing", path, format: "csv" };
+    const first = await engine.describeSchema(dataset);
+    assert.deepEqual(first.map((column) => column.name), ["name", "value"]);
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    await writeFile(path, "name,value,group\nA,1,x\nB,2,y\n", "utf8");
+    const second = await engine.describeSchema(dataset);
+    assert.deepEqual(second.map((column) => column.name), ["name", "value", "group"]);
+    const profile = await engine.inspectProfile(dataset, { fields: ["group"], sample_rows: 1 });
+    assert.equal(profile.row_count, 2);
+    assert.equal(profile.sample_rows.length, 1);
+  } finally {
+    engine.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

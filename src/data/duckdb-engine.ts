@@ -1,5 +1,6 @@
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import type { CompiledQuery, ColumnProfile, DatasetSpec, JsonObject, JsonValue } from "../core/types.js";
+import { DatasetMetadataCache, type DatasetFingerprint } from "./dataset-metadata-cache.js";
 
 export interface QueryResult {
   columns: string[];
@@ -91,19 +92,30 @@ function jsonValue(value: unknown): JsonValue {
 export class DuckDbEngine {
   #instance?: Promise<DuckDBInstance>;
   #connection?: Promise<DuckDBConnection>;
+  #metadata = new DatasetMetadataCache();
 
-  async inspect(dataset: DatasetSpec, options: InspectOptions = {}): Promise<DatasetInspection> {
+  async fingerprint(dataset: DatasetSpec): Promise<DatasetFingerprint> { return this.#metadata.fingerprint(dataset); }
+
+  async describeSchema(dataset: DatasetSpec): Promise<ColumnProfile[]> {
+    return this.#metadata.schema(dataset, async () => {
+      const connection = await this.#getConnection();
+      await this.#register(dataset);
+      const description = await connection.run(`DESCRIBE ${quoteIdentifier(dataset.id)}`);
+      const rows = await description.getRowObjectsJS();
+      return rows.map((row) => ({
+        name: String(row.column_name),
+        type: String(row.column_type),
+        nullable: String(row.null).toUpperCase() !== "NO"
+      }));
+    });
+  }
+
+  async inspectProfile(dataset: DatasetSpec, options: InspectOptions = {}): Promise<DatasetInspection> {
     const connection = await this.#getConnection();
     await this.#register(dataset);
-    const description = await connection.run(`DESCRIBE ${quoteIdentifier(dataset.id)}`);
-    const rows = await description.getRowObjectsJS();
+    const columns = await this.describeSchema(dataset);
     const count = await connection.run(`SELECT COUNT(*) AS "row_count" FROM ${quoteIdentifier(dataset.id)}`);
     const countRows = await count.getRowObjectsJS();
-    const columns: ColumnProfile[] = rows.map((row) => ({
-      name: String(row.column_name),
-      type: String(row.column_type),
-      nullable: String(row.null).toUpperCase() !== "NO"
-    }));
     const knownFields = new Set(columns.map((column) => column.name));
     const fields = options.fields ?? columns.map((column) => column.name);
     if (fields.some((field) => !knownFields.has(field))) throw new Error(`unknown_column: ${fields.find((field) => !knownFields.has(field))}`);
@@ -119,6 +131,10 @@ export class DuckDbEngine {
     const sample = await connection.run(`SELECT * FROM ${quoteIdentifier(dataset.id)} LIMIT ${sampleRows}`);
     const sample_rows = (await sample.getRowObjectsJS()).map((row) => jsonValue(row) as JsonObject);
     return { ...dataset, row_count: Number(countRows[0].row_count), columns, top_values, sample_rows };
+  }
+
+  async inspect(dataset: DatasetSpec, options: InspectOptions = {}): Promise<DatasetInspection> {
+    return this.inspectProfile(dataset, options);
   }
 
   async query(dataset: DatasetSpec, compiled: CompiledQuery): Promise<QueryResult> {
@@ -168,9 +184,12 @@ export class DuckDbEngine {
   }
 
   async #register(dataset: DatasetSpec): Promise<void> {
+    const fingerprint = await this.#metadata.fingerprint(dataset);
+    if (await this.#metadata.isRegistered(dataset)) return;
     const connection = await this.#getConnection();
     const reader = dataset.format === "csv" ? "read_csv_auto" : "read_parquet";
     await connection.run(`CREATE OR REPLACE TEMP VIEW ${quoteIdentifier(dataset.id)} AS SELECT * FROM ${reader}(${quoteString(dataset.path)})`);
+    this.#metadata.markRegistered(fingerprint.key);
   }
 
   async *#stream(dataset: DatasetSpec, sql: string, params?: CompiledQuery["params"]): AsyncGenerator<QueryChunk> {
