@@ -90,6 +90,7 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
   const renderReconcilerPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-reconciler.js");
   const renderMotionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/render-motion.js");
   const motionPolicyPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/motion-policy.js");
+  const performanceTracePath = join(dirname(fileURLToPath(import.meta.url)), "../../web/performance-trace.js");
   const crossMarkTransitionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/cross-mark-transition.js");
   const canvasGeometryPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/canvas-geometry.js");
   const canvasInteractionPath = join(dirname(fileURLToPath(import.meta.url)), "../../web/canvas-interaction.js");
@@ -272,6 +273,11 @@ export async function createWebServer(runtime: DataCanvasRuntime, port: number, 
     if (url.pathname === "/assets/motion-policy.js") {
       response.writeHead(200, { "content-type": "application/javascript" });
       response.end(await readFile(motionPolicyPath));
+      return;
+    }
+    if (url.pathname === "/assets/performance-trace.js") {
+      response.writeHead(200, { "content-type": "application/javascript" });
+      response.end(await readFile(performanceTracePath));
       return;
     }
     if (url.pathname === "/assets/cross-mark-transition.js") {

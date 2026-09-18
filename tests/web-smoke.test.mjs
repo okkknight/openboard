@@ -100,6 +100,16 @@ test("serves the shared motion policy as a browser module", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
+test("serves the browser performance trace module", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "browser-trace", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/assets/performance-trace.js`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /createBrowserTrace/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("serves the pure canvas geometry module", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "geometry-asset", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
@@ -282,9 +292,9 @@ test("handles live work events by rendering only affected cards", async () => {
   try {
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
     assert.match(html, /async function applyWorkEvent\(event\)/);
-    assert.match(html, /async function renderAffectedVisuals\(ids, workId, artifactGeneration\)/);
-    assert.match(html, /function renderWorkingVisual\(id, workId\)/);
-    assert.match(html, /event\.type === 'work\.visual\.changed'[\s\S]{0,400}renderWorkingVisual\(event\.visual_id, event\.work_id\)[\s\S]{0,400}await renderAffectedVisuals/);
+    assert.match(html, /async function renderAffectedVisuals\(ids, workId, artifactGeneration, traceId\)/);
+    assert.match(html, /function renderWorkingVisual\(id, workId, traceId\)/);
+    assert.match(html, /event\.type === 'work\.visual\.changed'[\s\S]{0,400}renderWorkingVisual\(event\.visual_id, event\.work_id, event\.trace_id\)[\s\S]{0,400}await renderAffectedVisuals/);
     assert.match(html, /event\.affected_ids \?\? \[\]/);
     assert.doesNotMatch(html, /if \(event\.type\.startsWith\('work\.'\)\)[\s\S]{0,800}renderEffectiveScene\(\)/);
   } finally { await server.close(); runtime.close(); }

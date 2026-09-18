@@ -110,6 +110,7 @@
     import { createCanvasMotion } from '__OPENBOARD_BASE_PATH__/assets/canvas-motion.js';
     import { createCanvasCommitter } from '__OPENBOARD_BASE_PATH__/assets/canvas-commit.js';
     import { createVisualRenderCache } from '__OPENBOARD_BASE_PATH__/assets/visual-render-cache.js';
+    import { createBrowserTrace } from '__OPENBOARD_BASE_PATH__/assets/performance-trace.js';
     const basePath = '__OPENBOARD_BASE_PATH__';
     const appPath = (path) => `${basePath}${path}`;
     const board = document.querySelector('#board');
@@ -137,6 +138,7 @@
     const renderIdentity = createRenderIdentityRegistry();
     const renderGenerations = createRenderGenerationTracker();
     const visualRenderCache = createVisualRenderCache();
+    const browserTrace = createBrowserTrace();
     const connectorLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); connectorLayer.id = 'connector-layer'; board.append(connectorLayer);
     const objectView = createCanvasObjectView({ board, renderAnnotation: renderAnnotationContent });
     const interactionChrome = createInteractionChrome(board);
@@ -452,16 +454,17 @@
       overlay.replaceChildren();
     }
 
-    function renderWorkingVisual(id, workId) {
+    function renderWorkingVisual(id, workId, traceId) {
       const visual = scene?.visuals?.[id];
       if (!visual) return;
       const card = ensureVisualCard(visual);
       showWorkingState(card, visual, workId);
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
       empty.hidden = true;
+      if (traceId) { browserTrace.begin(traceId); browserTrace.mark(traceId, 'draft_visible'); }
     }
 
-    async function render(id, workId = workForVisual(id), artifactGeneration) {
+    async function render(id, workId = workForVisual(id), artifactGeneration, traceId) {
       const requestGeneration = renderGenerations.request(id);
       renderMotion.begin(id, requestGeneration);
       const params = new URLSearchParams();
@@ -480,6 +483,7 @@
       visualRenderCache.remember(id, payload);
       const card = ensureVisualCard(visual);
       const plot = card.querySelector('.plot');
+      const motionPromises = [];
       try {
         const renderRows = plotData(payload.result.plot.data);
         if (payload.status === 'working') {
@@ -496,9 +500,9 @@
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg, false);
           reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
-            onEnter: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
-            onUpdate: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
-            onExit: (element, operation, meta) => renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }),
+            onEnter: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
+            onUpdate: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
+            onExit: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
             onReplaceLayer: (element, nextLayer, operation, meta) => {
               element.dataset.transition = crossMarkTransition(meta.fromMarkType, meta.markType).kind;
               return renderMotion.apply({ visualId: id, generation: requestGeneration, operation: { ...operation, type: 'exit' }, markType: meta.fromMarkType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase });
@@ -506,6 +510,11 @@
           });
         }
         if (payload.status !== 'working') clearWorkingState(card);
+        if (traceId && payload.status !== 'working') {
+          browserTrace.begin(traceId);
+          browserTrace.mark(traceId, 'visual_first_paint');
+          void Promise.allSettled(motionPromises).then(() => browserTrace.mark(traceId, 'visual_settled'));
+        }
       } catch (error) { const status = card.querySelector('.object-status'); status.textContent = error.message; status.hidden = false; status.classList.add('is-error'); }
       card.classList.toggle('is-focused', scene?.canvas?.focus === id);
       empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
@@ -547,9 +556,9 @@
       if (Object.keys(scene.visuals).some((id) => !existingIds.has(id))) fitView();
       empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
     }
-    async function renderAffectedVisuals(ids, workId, artifactGeneration) {
+    async function renderAffectedVisuals(ids, workId, artifactGeneration, traceId) {
       for (const id of [...new Set(ids)]) {
-        if (scene.visuals[id]) await render(id, workId, artifactGeneration);
+        if (scene.visuals[id]) await render(id, workId, artifactGeneration, traceId);
         else await removeCard(cardFor(id));
       }
       empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
@@ -559,18 +568,19 @@
       recordWorkStage(event);
       const terminal = event.type === 'work.completed' || event.type === 'work.cancelled';
       if (terminal) {
+        if (event.trace_id) { browserTrace.begin(event.trace_id); if (event.type === 'work.completed') browserTrace.mark(event.trace_id, 'work_committed'); }
         activeWorks.delete(event.work_id);
         if (event.type === 'work.completed') durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
         updateScene(mergeEffectiveScene());
-        await renderAffectedVisuals(event.affected_ids ?? [], undefined);
+        await renderAffectedVisuals(event.affected_ids ?? [], undefined, undefined, event.trace_id);
         return;
       }
       if (event.work) activeWorks.set(event.work_id, event.work);
       updateScene(mergeEffectiveScene());
       const affected = event.visual_id ? [event.visual_id] : event.activity?.visual_id ? [event.activity.visual_id] : event.affected_ids ?? [];
       const artifactGeneration = event.type === 'work.render.chunk' ? Number(event.payload?.artifact_generation) : undefined;
-      if (event.type === 'work.visual.changed' && event.visual_id) renderWorkingVisual(event.visual_id, event.work_id);
-      await renderAffectedVisuals(affected, event.work_id, artifactGeneration);
+      if (event.type === 'work.visual.changed' && event.visual_id) renderWorkingVisual(event.visual_id, event.work_id, event.trace_id);
+      await renderAffectedVisuals(affected, event.work_id, artifactGeneration, event.trace_id);
     }
     async function reloadScene() {
       const [nextDurable, workSnapshot] = await Promise.all([fetch(appPath('/api/scene')).then((response) => response.json()), fetch(appPath('/api/works')).then((response) => response.json())]);

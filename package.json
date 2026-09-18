@@ -14,7 +14,8 @@
     "verify:core": "npm run validate:contracts && npm run test:core",
     "build": "npm run build:core",
     "start": "npm run build && node dist/index.js",
-    "test": "npm run test:core"
+    "test": "npm run test:core",
+    "benchmark:streaming": "npm run build:core && node scripts/benchmark-streaming-latency.mjs"
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.5-r.4",
