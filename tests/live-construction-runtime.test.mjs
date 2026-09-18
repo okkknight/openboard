@@ -205,6 +205,21 @@ test("emits query activity only around a real work query", async () => {
   assert.equal(result.data.length, 4);
   assert.deepEqual(activity.map((event) => event.activity.status), ["started", "completed"]);
   assert.ok(activity[0].sequence < activity[1].sequence);
+  assert.equal(typeof activity[0].trace_id, "string");
+  assert.equal(activity[0].trace_id, activity[1].trace_id);
+  assert.ok(activity[1].timing.milestones.some((milestone) => milestone.name === "query_completed"));
+  runtime.close();
+});
+
+test("keeps performance traces out of durable scene and history", async () => {
+  const runtime = new DataCanvasRuntime(scene());
+  const work = await runtime.workApply({ action: "begin" });
+  await runtime.visualCreate(fullVisual(), undefined, work.result.work_id);
+  await runtime.workApply({ action: "commit", work_id: work.result.work_id });
+
+  const serialized = JSON.stringify(runtime.inspect());
+  assert.equal(serialized.includes("trace_id"), false);
+  assert.equal(serialized.includes("milestones"), false);
   runtime.close();
 });
 

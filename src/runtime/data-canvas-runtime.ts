@@ -7,6 +7,7 @@ import { DuckDbEngine, type InspectOptions, type DatasetInspection } from "../da
 import { compilePlot, type PlotConfig } from "../render/plot-compiler.js";
 import { EventBus, type SceneEvent } from "./event-bus.js";
 import { Persistence } from "./persistence.js";
+import { createTrace, type PerformanceTrace } from "./performance-trace.js";
 import { WorkSessionStore } from "./work-session-store.js";
 
 export interface RuntimeResult {
@@ -50,6 +51,7 @@ export class DataCanvasRuntime {
   #artifactPromises = new Map<string, Promise<RenderArtifact>>();
   #artifactGenerations = new Map<string, number>();
   #streamArtifactGenerations = new Map<string, number>();
+  #traces = new Map<string, PerformanceTrace>();
   #persistence?: Persistence;
   #pointLimit: number;
 
@@ -72,6 +74,9 @@ export class DataCanvasRuntime {
   async workApply(input: { action: "begin" | "commit" | "cancel"; work_id?: string }): Promise<{ status: "ok"; canvas_id: string; revision: number; result: { work_id: string; base_revision: number; sequence: number } }> {
     if (input.action === "begin") {
       const work = this.#works.begin(this.#store.inspect());
+      const trace = createTrace();
+      trace.mark("work_started");
+      this.#traces.set(work.id, trace);
       this.#emitWork("work.started", work);
       return this.#workResult(work);
     }
@@ -80,6 +85,7 @@ export class DataCanvasRuntime {
       const cancelled = this.#works.cancel(input.work_id);
       this.#clearWorkArtifacts(cancelled.id);
       this.#emitWork("work.cancelled", cancelled, undefined, undefined, this.#affectedVisualIds(cancelled));
+      this.#traces.delete(cancelled.id);
       return this.#workResult(cancelled);
     }
     const work = this.#works.get(input.work_id);
@@ -101,7 +107,9 @@ export class DataCanvasRuntime {
     }
     this.#promoteWorkArtifacts(work.id, mutation.revision);
     const completed = this.#works.complete(work.id);
+    this.#traces.get(work.id)?.mark("work_committed");
     this.#emitWork("work.completed", completed, undefined, mutation.revision, affectedIds);
+    this.#traces.delete(work.id);
     return { status: "ok", canvas_id: durable.canvas_id, revision: mutation.revision, result: { work_id: completed.id, base_revision: completed.base_revision, sequence: completed.sequence } };
   }
 
@@ -264,11 +272,13 @@ export class DataCanvasRuntime {
   }
 
   async #withActivity<T>(workId: string, kind: WorkActivity["kind"], label: string, operation: () => Promise<T>, visualId?: string): Promise<T> {
+    if (kind === "query") this.#traces.get(workId)?.mark("query_started");
     const activity = { kind, status: "started" as const, label, ...(visualId ? { visual_id: visualId } : {}) };
     const started = this.#works.setActivity(workId, activity);
     this.#emitWork("work.activity", started, visualId);
     try {
       const result = await operation();
+      if (kind === "query") this.#traces.get(workId)?.mark("query_completed");
       const completed = this.#works.setActivity(workId, { ...activity, status: "completed" });
       this.#emitWork("work.activity", completed, visualId);
       return result;
@@ -289,7 +299,8 @@ export class DataCanvasRuntime {
     if (type !== "work.completed" && type !== "work.cancelled") {
       try { effective = this.#works.effectiveScene(work.id, this.#store.inspect()); } catch { /* terminal session has no overlay */ }
     }
-    this.#events.emit({ type, canvas_id: this.#store.inspect().canvas_id, revision, visual_id: visualId, ...(affectedIds?.length ? { affected_ids: affectedIds } : {}), ...(payload ? { payload } : {}), work_id: work.id, base_revision: work.base_revision, sequence: work.sequence, activity: work.activity, work, effective_scene: effective });
+    const trace = this.#traces.get(work.id);
+    this.#events.emit({ type, canvas_id: this.#store.inspect().canvas_id, revision, visual_id: visualId, ...(affectedIds?.length ? { affected_ids: affectedIds } : {}), ...(payload ? { payload } : {}), work_id: work.id, base_revision: work.base_revision, sequence: work.sequence, activity: work.activity, work, effective_scene: effective, ...(trace ? { trace_id: trace.id, timing: trace.snapshot() } : {}) });
   }
 
   async #renderStream(key: string, visual: VisualSpec, revision: number, workId: string): Promise<RenderArtifact> {

@@ -1,4 +1,5 @@
 import type { CanvasObjectRef, EffectiveScene, WorkActivity, WorkSession } from "../core/types.js";
+import type { TraceSnapshot } from "./performance-trace.js";
 
 export interface SceneEvent {
   type: "scene.loaded" | "visual.created" | "visual.changed" | "visual.removed" | "annotation.created" | "annotation.changed" | "annotation.removed" | "focus.changed" | "layout.changed" | "history.changed" | "work.started" | "work.activity" | "work.visual.changed" | "work.render.chunk" | "work.completed" | "work.cancelled" | "work.failed" | "work.snapshot";
@@ -15,6 +16,8 @@ export interface SceneEvent {
   work?: WorkSession;
   effective_scene?: EffectiveScene;
   payload?: Record<string, unknown>;
+  trace_id?: string;
+  timing?: TraceSnapshot;
 }
 
 export class EventBus {
