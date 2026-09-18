@@ -24,11 +24,10 @@ async function waitFor(check) {
 
 class TwoChunkEngine extends DuckDbEngine {
   constructor(firstGate, secondGate) { super(); this.firstGate = firstGate; this.secondGate = secondGate; }
-  async *stream() {
+  async queryGuarded() {
     await this.firstGate.promise;
-    yield { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }] };
     await this.secondGate.promise;
-    yield { columns: ["channel", "orders"], rows: [{ channel: "B", orders: 12 }] };
+    return { columns: ["channel", "orders"], rows: [{ channel: "A", orders: 8 }, { channel: "B", orders: 12 }], exceeded: false };
   }
 }
 
@@ -92,7 +91,7 @@ test("actual MCP, runtime, WebSocket, and HTTP flow commits one live work sessio
   }
 });
 
-test("an attached browser receives a draft, a working response, and each real render chunk before commit", async () => {
+test("an attached browser keeps a draft until one safe render artifact is available", async () => {
   const firstGate = deferred();
   const secondGate = deferred();
   const runtime = new DataCanvasRuntime({
@@ -137,14 +136,18 @@ test("an attached browser receives a draft, a working response, and each real re
     assert.equal(events.some((event) => event.work_id === workId && event.type === "work.render.chunk"), false);
 
     firstGate.release();
-    await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.render.chunk"));
-    const chunk = events.find((event) => event.work_id === workId && event.type === "work.render.chunk");
-    const partial = await fetch(`http://127.0.0.1:${web.port}/api/visual/orders-by-channel?work_id=${workId}&artifact_generation=${chunk.payload.artifact_generation}`).then((response) => response.json());
-    assert.equal(partial.status, "rendered");
-    assert.equal(partial.result.rows, 1);
-    assert.equal(events.some((event) => event.work_id === workId && event.type === "work.completed"), false);
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal(events.some((event) => event.work_id === workId && event.type === "work.render.chunk"), false);
 
     secondGate.release();
+    await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.render.chunk"));
+    const chunk = events.find((event) => event.work_id === workId && event.type === "work.render.chunk");
+    const rendered = await fetch(`http://127.0.0.1:${web.port}/api/visual/orders-by-channel?work_id=${workId}&artifact_generation=${chunk.payload.artifact_generation}`).then((response) => response.json());
+    assert.equal(rendered.status, "rendered");
+    assert.equal(rendered.result.rows, 2);
+    assert.equal(rendered.result.artifact.stream_state, "complete");
+    assert.equal(events.some((event) => event.work_id === workId && event.type === "work.completed"), false);
+
     await create;
     await call("work.apply", { action: "commit", work_id: workId });
     await waitFor(() => events.some((event) => event.work_id === workId && event.type === "work.completed"));

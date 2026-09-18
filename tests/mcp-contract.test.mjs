@@ -110,7 +110,7 @@ test("returns a structured render-limit status from the MCP adapter", async () =
   const response = await server._registeredTools["visual.create"].handler({ id: "limited", work_id: workId, source: "orders", query: { dimensions: [{ field: "created_at" }] }, marks: [] });
   const payload = JSON.parse(response.content[0].text);
   assert.equal(payload.status, "render_limit_exceeded");
-  assert.equal(payload.result.requested_rows, 16);
+  assert.equal(payload.result.requested_rows, 3);
   assert.deepEqual(payload.result.suggestions, ["aggregate", "bin", "explicit_sample"]);
   await server._registeredTools["work.apply"].handler({ action: "cancel", work_id: workId });
   runtime.close();

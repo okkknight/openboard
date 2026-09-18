@@ -23,6 +23,10 @@ For a request that creates a visual or needs more than one meaningful analysis o
 - Runtime activity comes only from real inspect/query/render operations. Never send fake progress, “thinking”, or chain-of-thought narration to the canvas.
 - Finish a successful multi-step operation with `work.apply({ action: "commit", work_id })`; if it cannot be completed, use `cancel`. Work patches are ephemeral until commit.
 - Every chart mutation (`visual.create`, `visual.patch`, and `visual.clone`) requires the caller to begin an explicit WorkSession and pass its `work_id`; there is no implicit or single-step compatibility path. Multi-step analysis should use one explicit `work_id` from begin through commit/cancel.
+- If the dataset schema is already known, create the complete visual immediately after `work.apply({ action: "begin" })`.
+- If the dataset schema is unknown, create a title/intent draft before `data.inspect` so the canvas reflects real work immediately.
+- Do not call `data.query` merely to fetch rows that an immediately following visual render will query; rely on the render observation instead.
+- Use `data.query` when analysis must precede the choice of visual expression. A later visual in the same WorkSession may reuse that query artifact.
 
 ## Required reading before coding
 
