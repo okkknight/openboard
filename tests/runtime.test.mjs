@@ -183,6 +183,26 @@ test("creates and patches annotations through one explicit runtime mutation surf
   runtime.close();
 });
 
+test("undoes and redoes one atomic mixed-object layout history record", async () => {
+  const runtime = new DataCanvasRuntime({
+    canvas_id: "mixed-history", revision: 0, datasets: {},
+    visuals: { v1: { id: "v1", kind: "plot", source: "orders", query: {}, marks: [], layout: { x: 0, y: 0, w: 300, h: 200 } } },
+    annotations: { a1: { id: "a1", text: "Note", layout: { x: 320, y: 0, w: 180, h: 80 }, created_at: "2026-09-17T00:00:00.000Z" } }, canvas: {}
+  });
+  await runtime.canvasCompose({ action: "move", layout_updates: [
+    { target: { kind: "visual", id: "v1" }, layout: { x: 20, y: 30, w: 300, h: 200 } },
+    { target: { kind: "annotation", id: "a1" }, layout: { x: 340, y: 30, w: 180, h: 80 } }
+  ] });
+  assert.equal(runtime.inspect().revision, 1);
+  await runtime.historyApply({ action: "undo" });
+  assert.equal(runtime.inspect().visuals.v1.layout.x, 0);
+  assert.equal(runtime.inspect().annotations.a1.layout.x, 320);
+  await runtime.historyApply({ action: "redo" });
+  assert.equal(runtime.inspect().visuals.v1.layout.x, 20);
+  assert.equal(runtime.inspect().annotations.a1.layout.x, 340);
+  runtime.close();
+});
+
 test("routes visual and data raw SQL through the read-only guard", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "raw", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
   await assert.rejects(() => runtime.dataQuery("orders", { sql: "DELETE FROM orders" }), /query_rejected/);

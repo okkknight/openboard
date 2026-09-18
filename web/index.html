@@ -142,6 +142,7 @@
     const interactionChrome = createInteractionChrome(board);
     const canvasMotion = createCanvasMotion({ reducedMotion: () => motionReduced() });
     const objectKey = (element) => `${element.dataset.kind}:${element.dataset.objectId}`;
+    const refForKey = (key) => { const split = key.indexOf(':'); return { kind: key.slice(0, split), id: key.slice(split + 1) }; };
     const currentLayouts = (keys) => new Map(keys.map((key) => { const split = key.indexOf(':'); const layout = objectView.layoutFor(key.slice(0, split), key.slice(split + 1)); return [key, layout]; }).filter(([, layout]) => layout));
     const allLayoutEntries = () => objectView.allRefs().map((ref) => [`${ref.kind}:${ref.id}`, objectView.layoutFor(ref.kind, ref.id)]).filter(([, layout]) => layout);
     const showSelection = (refs) => {
@@ -186,7 +187,7 @@
       const after = card.getBoundingClientRect();
       const dx = before.left - after.left; const dy = before.top - after.top;
       const sx = after.width ? before.width / after.width : 1; const sy = after.height ? before.height / after.height : 1;
-      if (dx || dy || sx !== 1 || sy !== 1) card.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})` }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      if (dx || dy || sx !== 1 || sy !== 1) void canvasMotion.layout(card, { x: dx, y: dy, sx, sy });
     };
     function animateCardBirth(card, parent) {
       if (motionReduced()) return;
@@ -196,7 +197,7 @@
     }
     async function removeCard(card) {
       if (!card) return;
-      if (!motionReduced()) await card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-8px) scale(.98)' }], { duration: 160, easing: 'ease-in', fill: 'both' }).finished.catch(() => {});
+      await canvasMotion.exit(card);
       objectView.remove(card.dataset.kind, card.dataset.objectId);
     }
     function revealNewVisual(card) {
@@ -579,9 +580,9 @@
     document.querySelector('#reset').addEventListener('click', () => { zoom = 1; board.style.transform = 'scale(1)'; interaction.clearSelection(); });
     toggleDetails.addEventListener('click', () => setDetailsVisible(false));
     showDetails.addEventListener('click', () => setDetailsVisible(true));
-    document.querySelectorAll('#inspect-x,#inspect-y,#inspect-w,#inspect-h').forEach((input) => input.addEventListener('change', () => { const state = interaction.getState(); if (state.selection.length !== 1) return; const original = currentLayouts(state.selection); const current = original.values().next().value; const next = { x: Number(document.querySelector('#inspect-x').value), y: Number(document.querySelector('#inspect-y').value), w: Number(document.querySelector('#inspect-w').value), h: Number(document.querySelector('#inspect-h').value) }; const [kind, id] = state.selection[0].split(':'); void committer.commitLayoutGesture({ action: current.w === next.w && current.h === next.h ? 'move' : 'resize', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: [{ target: { kind, id }, layout: next }] }); }));
+    document.querySelectorAll('#inspect-x,#inspect-y,#inspect-w,#inspect-h').forEach((input) => input.addEventListener('change', () => { const state = interaction.getState(); if (state.selection.length !== 1) return; const original = currentLayouts(state.selection); const current = original.values().next().value; const next = { x: Number(document.querySelector('#inspect-x').value), y: Number(document.querySelector('#inspect-y').value), w: Number(document.querySelector('#inspect-w').value), h: Number(document.querySelector('#inspect-h').value) }; const target = refForKey(state.selection[0]); void committer.commitLayoutGesture({ action: current.w === next.w && current.h === next.h ? 'move' : 'resize', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: [{ target, layout: next }] }); }));
     document.querySelectorAll('#inspect-variant,#inspect-align').forEach((input) => input.addEventListener('change', () => { const selected = interaction.getState().selection; if (selected.length !== 1 || !selected[0].startsWith('annotation:')) return; const id = selected[0].slice('annotation:'.length); void committer.patchAnnotation({ id, baseRevision: durableScene.revision, patch: { style: { variant: document.querySelector('#inspect-variant').value, align: document.querySelector('#inspect-align').value } } }); }));
-    document.querySelectorAll('[data-align]').forEach((button) => button.addEventListener('click', () => { const selected = interaction.getState().selection; if (selected.length < 2) return; const original = currentLayouts(selected); const items = [...original]; const bounds = boundsForLayouts(original); let cursor = bounds.x; const updates = items.map(([key, layout]) => { const [kind, id] = key.split(':'); const next = { ...layout }; if (button.dataset.align === 'left') next.x = bounds.x; if (button.dataset.align === 'top') next.y = bounds.y; if (button.dataset.align === 'horizontal') { next.x = cursor; cursor += layout.w + (bounds.w - items.reduce((sum, [, value]) => sum + value.w, 0)) / (items.length - 1); } return { target: { kind, id }, layout: next }; }); void committer.commitLayoutGesture({ action: 'move', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: updates }); }));
+    document.querySelectorAll('[data-align]').forEach((button) => button.addEventListener('click', () => { const selected = interaction.getState().selection; if (selected.length < 2) return; const original = currentLayouts(selected); const items = [...original]; const bounds = boundsForLayouts(original); let cursor = bounds.x; const updates = items.map(([key, layout]) => { const next = { ...layout }; if (button.dataset.align === 'left') next.x = bounds.x; if (button.dataset.align === 'top') next.y = bounds.y; if (button.dataset.align === 'horizontal') { next.x = cursor; cursor += layout.w + (bounds.w - items.reduce((sum, [, value]) => sum + value.w, 0)) / (items.length - 1); } return { target: refForKey(key), layout: next }; }); void committer.commitLayoutGesture({ action: 'move', baseRevision: durableScene.revision, originalLayouts: original, layoutUpdates: updates }); }));
     let spacePressed = false;
     const screenPoint = (event) => ({ x: event.clientX, y: event.clientY });
     const canvasPoint = (event) => { const bounds = board.getBoundingClientRect(); return { x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom }; };
@@ -591,7 +592,7 @@
       const object = event.target.closest?.('.canvas-object');
       if (spacePressed) { interaction.beginPan(screenPoint(event), { pointerId: event.pointerId }); board.setPointerCapture(event.pointerId); return; }
       if (object) {
-        interaction.select({ kind: object.dataset.kind, id: object.dataset.objectId }, { additive: event.shiftKey });
+        interaction.select({ kind: object.dataset.kind, id: object.dataset.objectId }, { additive: event.shiftKey, preserveIfSelected: true });
         interaction.beginMove(screenPoint(event), { pointerId: event.pointerId, zoom }); object.setPointerCapture(event.pointerId); return;
       }
       interaction.beginMarquee(canvasPoint(event), { pointerId: event.pointerId, additive: event.shiftKey }); board.setPointerCapture(event.pointerId);

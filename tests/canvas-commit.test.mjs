@@ -17,7 +17,7 @@ function conflictHarness({ targetChanged }) {
   let attempt = 0;
   const latestScene = { revision: 4, visuals: { v1: { layout: targetChanged ? { ...layout, x: 5 } : layout } }, annotations: { a1: { layout: { x: 120, y: 0, w: 80, h: 60 } } } };
   return {
-    composeCalls, rollbacks, announcements, latestScene,
+    composeCalls, rollbacks, announcements, applied, latestScene,
     committer: createCanvasCommitter({
       postCompose: async (body) => { composeCalls.push(body); attempt += 1; if (attempt === 1) throw Object.assign(new Error("revision_conflict"), { status: 409, code: "revision_conflict" }); return { status: "ok", revision: 5 }; },
       postAnnotate: async () => ({ status: "ok" }), fetchScene: async () => latestScene,
@@ -38,6 +38,8 @@ test("rolls back when the same target changed concurrently", async () => {
   const harness = conflictHarness({ targetChanged: true });
   await assert.rejects(() => harness.committer.commitLayoutGesture(gesture()), /layout_conflict/);
   assert.equal(harness.rollbacks.length, 1);
+  assert.equal(harness.rollbacks[0].get("visual:v1").x, 5);
+  assert.equal(harness.applied[0], harness.latestScene);
   assert.equal(harness.composeCalls.length, 1);
   assert.match(harness.announcements[0], /changed elsewhere/i);
 });

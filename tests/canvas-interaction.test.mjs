@@ -34,6 +34,19 @@ test("selection is ephemeral and shift toggles members", () => {
   assert.equal(calls.commits.length, 0);
 });
 
+test("pointer selection preserves a multi-selection when dragging one of its members", () => {
+  const calls = harness();
+  calls.controller.select({ kind: "visual", id: "a" });
+  calls.controller.select({ kind: "annotation", id: "b" }, { additive: true });
+  calls.controller.select({ kind: "visual", id: "a" }, { preserveIfSelected: true });
+  assert.deepEqual(calls.controller.getState().selection, ["visual:a", "annotation:b"]);
+  calls.controller.beginMove({ x: 0, y: 0 }, { pointerId: 8, zoom: 1 });
+  calls.controller.updatePointer({ x: 20, y: 10 }, { pointerId: 8, controlKey: true });
+  calls.controller.finishPointer({ pointerId: 8 });
+  assert.equal(calls.commits.length, 1);
+  assert.equal(calls.commits[0].layoutUpdates.length, 2);
+});
+
 test("pointer movement previews locally and commits one move on finish", () => {
   const calls = harness();
   calls.controller.select({ kind: "visual", id: "a" });
@@ -57,6 +70,16 @@ test("Escape rolls back and a no-op pointer finish does not commit", () => {
   assert.equal(calls.commits.length, 0);
   calls.controller.beginMove({ x: 0, y: 0 }, { pointerId: 3, zoom: 1 });
   calls.controller.finishPointer({ pointerId: 3 });
+  assert.equal(calls.commits.length, 0);
+});
+
+test("sub-threshold pointer jitter stays a selection click and never snaps or commits", () => {
+  const calls = harness();
+  calls.controller.select({ kind: "annotation", id: "b" });
+  calls.controller.beginMove({ x: 660, y: 140 }, { pointerId: 9, zoom: 1 });
+  calls.controller.updatePointer({ x: 661, y: 141 }, { pointerId: 9 });
+  assert.equal(calls.previews.length, 0);
+  calls.controller.finishPointer({ pointerId: 9 });
   assert.equal(calls.commits.length, 0);
 });
 

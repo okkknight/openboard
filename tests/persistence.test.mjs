@@ -31,3 +31,23 @@ test("persists revision snapshots and lineage metadata", async () => {
     assert.deepEqual(await persistence.loadMetadata(), { checkpoints: { baseline: 4 }, forks: [{ branch_id: "test/fork/4", parent_revision: 4, created_at: "2026-09-10T00:00:00.000Z" }] });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("round-trips annotation layout and semantic style across restart storage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openboard-annotation-state-"));
+  try {
+    const persistence = new Persistence(root);
+    const annotated = {
+      ...scene,
+      revision: 8,
+      annotations: {
+        insight: {
+          id: "insight", text: "Channel B leads", layout: { x: 420, y: 60, w: 280, h: 120 },
+          style: { variant: "insight", align: "center", color_role: "accent" }, created_at: "2026-09-17T00:00:00.000Z"
+        }
+      }
+    };
+    await persistence.saveRuntimeState({ scene: annotated, history: [], snapshots: [annotated], metadata: { checkpoints: {}, forks: [] } });
+    assert.deepEqual((await persistence.loadScene()).annotations.insight, annotated.annotations.insight);
+    assert.deepEqual((await persistence.loadSnapshot(8)).annotations.insight.style, annotated.annotations.insight.style);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

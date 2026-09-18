@@ -15,8 +15,12 @@ export function createCanvasCommitter({ fetchScene, postCompose, postAnnotate, a
       if (error?.status !== 409 && error?.code !== 'revision_conflict') throw error;
       const latest = await fetchScene();
       const unchanged = gesture.layoutUpdates.every(({ target }) => sameLayout(sceneLayout(latest, target), originalFor(gesture.originalLayouts, keyFor(target))));
+      const recoverLatest = (durable) => {
+        applyDurableScene(durable);
+        rollback(new Map(gesture.layoutUpdates.map(({ target }) => [keyFor(target), { ...sceneLayout(durable, target) }])));
+      };
       if (!unchanged) {
-        rollback(gesture.originalLayouts);
+        recoverLatest(latest);
         announce('Layout changed elsewhere. Your gesture was rolled back.');
         throw new Error('layout_conflict');
       }
@@ -25,7 +29,7 @@ export function createCanvasCommitter({ fetchScene, postCompose, postAnnotate, a
         applyDurableScene(await fetchScene());
         return result;
       } catch (retryError) {
-        rollback(gesture.originalLayouts);
+        recoverLatest(await fetchScene().catch(() => latest));
         announce('Layout changed again. Your gesture was rolled back.');
         throw retryError;
       }

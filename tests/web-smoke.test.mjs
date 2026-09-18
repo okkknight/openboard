@@ -332,6 +332,24 @@ test("serves one accessible interaction chrome and delegated direct-manipulation
   } finally { await server.close(); runtime.close(); }
 });
 
+test("keeps canvas objects keyboard accessible and motion optional", async () => {
+  const runtime = new DataCanvasRuntime({ canvas_id: "accessible-canvas", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
+  const server = await createWebServer(runtime, 0);
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    const objectView = await fetch(`http://127.0.0.1:${server.port}/assets/canvas-object-view.js`).then((response) => response.text());
+    const chrome = await fetch(`http://127.0.0.1:${server.port}/assets/interaction-chrome.js`).then((response) => response.text());
+    assert.match(objectView, /element\.tabIndex = 0/);
+    assert.match(objectView, /setAttribute\('aria-label'/);
+    assert.match(chrome, /aria-live/);
+    assert.match(html, /:focus-visible/);
+    assert.match(html, /prefers-reduced-motion/);
+    assert.match(html, /canvasMotion\.layout/);
+    assert.match(html, /canvasMotion\.exit/);
+    assert.match(html, /const refForKey =/);
+  } finally { await server.close(); runtime.close(); }
+});
+
 test("uses retained card birth and exit paths instead of reloading every visual", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "spatial-life", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);

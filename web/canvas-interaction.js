@@ -8,6 +8,7 @@ const objectRef = (key) => {
 const equalLayout = (a, b) => a && b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 const rectangle = (start, end) => ({ x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), w: Math.abs(end.x - start.x), h: Math.abs(end.y - start.y) });
 const intersects = (a, b) => a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y;
+const DRAG_THRESHOLD_PX = 3;
 
 export function createInteractionController(options = {}) {
   const callbacks = {
@@ -36,7 +37,7 @@ export function createInteractionController(options = {}) {
       pointerId: settings.pointerId,
       origin: { ...pointer }, current: { ...pointer }, zoom: settings.zoom ?? 1,
       baseRevision: callbacks.getRevision(), original, preview: cloneMap(original),
-      handle: settings.handle, additive: Boolean(settings.additive), initialSelection: [...state.selection]
+      handle: settings.handle, additive: Boolean(settings.additive), initialSelection: [...state.selection], activated: false
     };
   };
   const previewChanged = (gesture) => [...gesture.preview].some(([key, layout]) => !equalLayout(layout, gesture.original.get(key)));
@@ -51,9 +52,10 @@ export function createInteractionController(options = {}) {
   };
 
   return {
-    select(ref, { additive = false } = {}) {
+    select(ref, { additive = false, preserveIfSelected = false } = {}) {
       requireIdle();
       const key = `${ref.kind}:${ref.id}`;
+      if (!additive && preserveIfSelected && state.selection.includes(key)) return;
       if (!additive) state.selection = [key];
       else if (state.selection.includes(key)) state.selection = state.selection.filter((item) => item !== key);
       else state.selection = [...state.selection, key];
@@ -72,6 +74,8 @@ export function createInteractionController(options = {}) {
       if (state.phase === 'marquee') { callbacks.onMarquee(rectangle(gesture.origin, pointer)); return; }
       const screenDelta = { x: pointer.x - gesture.origin.x, y: pointer.y - gesture.origin.y };
       if (state.phase === 'panning') { callbacks.onPan(screenDelta); return; }
+      if (!gesture.activated && Math.hypot(screenDelta.x, screenDelta.y) < DRAG_THRESHOLD_PX) return;
+      gesture.activated = true;
       const delta = screenDeltaToCanvas(screenDelta, gesture.zoom);
       const transformed = state.phase === 'resizing'
         ? resizeLayouts(gesture.original, boundsForLayouts(gesture.original), gesture.handle, delta, settings, callbacks.minimumFor)
