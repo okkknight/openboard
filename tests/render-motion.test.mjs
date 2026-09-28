@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { finishAnimationAtCurrentState, motionFrames, motionStrategy } from "../web/render-motion.js";
+import { countRenderableElements, createRenderMotion, finishAnimationAtCurrentState, motionFrames, motionStrategy } from "../web/render-motion.js";
 
 test("maps render operations to explicit mark-family motion strategies", () => {
   assert.deepEqual(motionStrategy("enter", "barY"), { family: "bar", action: "baseline-enter" });
@@ -41,4 +41,30 @@ test("commits an interrupted animation before cancellation", () => {
   const calls = [];
   finishAnimationAtCurrentState({ commitStyles() { calls.push("commit"); }, cancel() { calls.push("cancel"); } });
   assert.deepEqual(calls, ["commit", "cancel"]);
+});
+
+test("animates a large result as one layer and skips small-result layer motion", async () => {
+  const calls = [];
+  const layer = {
+    animate(frames, options) {
+      calls.push({ frames, options });
+      const animation = { cancel() { this.oncancel?.(); } };
+      queueMicrotask(() => animation.onfinish?.());
+      return animation;
+    }
+  };
+  const motion = createRenderMotion();
+  motion.begin("v1", 1);
+  await motion.applyLayer({ visualId: "v1", generation: 1, element: layer, phase: "data-enter", elementCount: 121 });
+  await motion.applyLayer({ visualId: "v1", generation: 1, element: layer, phase: "data-enter", elementCount: 4 });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].frames, [{ opacity: 0.82 }, { opacity: 1 }]);
+});
+
+test("counts actual keyed SVG elements rather than identity descriptors", () => {
+  const svg = { querySelectorAll(selector) {
+    assert.equal(selector, '[data-render-key]');
+    return Array.from({ length: 121 });
+  } };
+  assert.equal(countRenderableElements(svg), 121);
 });

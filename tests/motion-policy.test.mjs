@@ -26,9 +26,16 @@ test("uses opacity only for reduced motion and skips animation in hidden tabs", 
   assert.equal(hidden.forOperation(input).animate, false);
 });
 
-test("disables per-element stagger above the animation cap", () => {
+test("replaces per-element animation with one layer transition above the cap", () => {
   const policy = createMotionPolicy({ reduced: () => false, hidden: () => false, maxAnimatedElements: 120 });
-  assert.equal(policy.forOperation({ ...input, index: 4, elementCount: 121 }).delay, 0);
+  assert.equal(policy.forOperation({ ...input, index: 4, elementCount: 121 }).animate, false);
+  assert.deepEqual(policy.forLayer({ phase: "data-enter", elementCount: 121 }), {
+    animate: true,
+    duration: 280,
+    easing: "cubic-bezier(.2,.8,.2,1)",
+    mode: "layer-fade"
+  });
+  assert.equal(policy.forLayer({ phase: "data-enter", elementCount: 120 }).animate, false);
 });
 
 test("uses update and layout-settle timing classes", () => {

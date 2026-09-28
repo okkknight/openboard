@@ -8,6 +8,10 @@ const FAMILY = new Map([
 
 const NUMERIC_ATTRIBUTES = ['x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'x1', 'x2', 'y1', 'y2', 'rx', 'ry', 'stroke-width'];
 
+export function countRenderableElements(svg) {
+  return svg.querySelectorAll('[data-render-key]').length;
+}
+
 export function motionStrategy(operation, markType) {
   const family = FAMILY.get(markType) ?? 'fallback';
   const action = {
@@ -117,6 +121,19 @@ export function createRenderMotion({ reduced = () => false, hidden = () => false
         finishAnimationAtCurrentState(animation);
         animations.delete(animationKey);
       }
+    },
+    async applyLayer({ visualId, generation, element, phase, elementCount }) {
+      if (!element || !current(visualId, generation)) return;
+      const decision = policy.forLayer({ phase, elementCount });
+      if (!decision.animate) return;
+      const active = () => current(visualId, generation);
+      const register = (animation) => {
+        const animationKey = `${key(visualId, generation)}:${animationSequence++}`;
+        animations.set(animationKey, animation);
+        return () => animations.delete(animationKey);
+      };
+      await waitForAnimation(element, [{ opacity: 0.82 }, { opacity: 1 }], { duration: decision.duration, easing: decision.easing, fill: 'both' }, active, register);
+      if (active()) element.style?.removeProperty?.('opacity');
     },
     async apply({ visualId, generation, operation, markType, element, from = {}, index = 0, elementCount = 1, phase = 'semantic-update' }) {
       if (!element || !current(visualId, generation)) return;

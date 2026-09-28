@@ -8,7 +8,8 @@
     :root { color-scheme: dark; --bg: #0d1117; --panel: #151b24; --panel-2: #1b2430; --line: #2b3645; --muted: #9aa8ba; --text: #edf3fb; --accent: #6bd8c4; --focus: #f6c86e; }
     * { box-sizing: border-box; }
     body { margin: 0; min-width: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; }
-    header { height: 64px; display: flex; align-items: center; gap: 22px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(13,17,23,.94); position: sticky; top: 0; z-index: 5; }
+    header { height: 64px; display: flex; align-items: center; gap: 18px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(13,17,23,.94); position: sticky; top: 0; z-index: 5; }
+    header > .brand, header > .eyebrow, header > .status, header > .revision, header > button { flex-shrink: 0; white-space: nowrap; }
     .brand { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
     .eyebrow { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
     .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
@@ -18,7 +19,7 @@
     button { border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--text); padding: 7px 12px; cursor: pointer; }
     button:hover { border-color: var(--accent); }
     .revision { color: var(--muted); font-variant-numeric: tabular-nums; }
-    #construction-status { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: min(48vw, 680px); padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(21,27,36,.9); color: var(--muted); font-size: 12px; }
+    #construction-status { display: inline-flex; flex: 0 1 300px; align-items: center; gap: 8px; min-width: 0; max-width: 25vw; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(21,27,36,.9); color: var(--muted); font-size: 12px; }
     #construction-status[hidden] { display: none; }
     .construction-label { flex: 0 0 auto; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
     #construction-stages { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -100,7 +101,7 @@
     import { createSerialTaskQueue } from '__OPENBOARD_BASE_PATH__/assets/work-event-queue.js';
     import { createRenderIdentityRegistry } from '__OPENBOARD_BASE_PATH__/assets/render-identity-registry.js';
     import { annotateDetachedPlotLayer, createRenderGenerationTracker, markClass, reconcilePlotViewport } from '__OPENBOARD_BASE_PATH__/assets/render-reconciler.js';
-    import { createRenderMotion } from '__OPENBOARD_BASE_PATH__/assets/render-motion.js?v=lc2-20260916';
+    import { countRenderableElements, createRenderMotion } from '__OPENBOARD_BASE_PATH__/assets/render-motion.js?v=lc2-20260916';
     import { crossMarkTransition } from '__OPENBOARD_BASE_PATH__/assets/cross-mark-transition.js';
     import { createCanvasObjectView } from '__OPENBOARD_BASE_PATH__/assets/canvas-object-view.js';
     import { fallbackAnnotationLayout, renderAnnotationContent, renderConnectors } from '__OPENBOARD_BASE_PATH__/assets/annotation-renderer.js';
@@ -165,9 +166,9 @@
       getLayouts: currentLayouts,
       getStationaryLayouts: (selected) => new Map(allLayoutEntries().filter(([key]) => !selected.includes(key))),
       minimumFor: (key) => key.startsWith('annotation:') ? { w: 140, h: 56 } : { w: 260, h: 180 },
-      onPreview: (layouts, guides) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } interactionChrome.renderSelection(boundsForLayouts(layouts)); interactionChrome.renderGuides(guides); },
+      onPreview: (layouts, guides) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } interactionChrome.renderSelection(boundsForLayouts(layouts)); interactionChrome.renderGuides(guides); syncSelectedInspector(); },
       onCommit: (gesture) => { void committer.commitLayoutGesture(gesture).catch((error) => { if (error.message !== 'layout_conflict') interactionChrome.announce(error.message); }); },
-      onRollback: (layouts, message) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } interactionChrome.announce(message); },
+      onRollback: (layouts, message) => { for (const [key, layout] of layouts) { const split = key.indexOf(':'); applyLayout(objectView.elementFor(key.slice(0, split), key.slice(split + 1)), layout); } syncSelectedInspector(); interactionChrome.announce(message); },
       onSelectionChange: showSelection,
       onMarquee: (bounds) => interactionChrome.renderMarquee(bounds),
       onPan: (delta) => { viewport.scrollLeft -= delta.x; viewport.scrollTop -= delta.y; }
@@ -398,7 +399,6 @@
       if (!renderGenerations.accepts(id, requestGeneration)) return;
       const previousPayload = visualRenderCache.get(id);
       const motionPhase = payload.status === 'working' ? 'draft' : previousPayload ? 'semantic-update' : 'data-enter';
-      const motionElementCount = (payload.result.artifact?.identity?.marks || []).reduce((total, mark) => total + (mark.render_keys?.length || 0), 0);
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
       const visual = payload.result.visual;
       visualRenderCache.remember(id, payload);
@@ -420,7 +420,8 @@
           const layout = visualLayout(visual); const width = Math.max(220, layout.w - 16); const height = Math.max(120, layout.h - 48);
           const svg = Plot.plot({ width, height, margin: 32, color: { range: plotPalette }, marks: payload.result.plot.marks.map((mark) => markToPlot(mark, renderRows)) });
           for (const primitive of payload.result.plot.primitives || []) renderPrimitiveLayer(primitive, width, height, svg);
-          reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
+          const motionElementCount = countRenderableElements(svg);
+          const reconciled = reconcilePlotViewport(plot, svg, visual, payload.result.artifact, {
             onEnter: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
             onUpdate: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, from: meta.from, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
             onExit: (element, operation, meta) => { const motion = renderMotion.apply({ visualId: id, generation: requestGeneration, operation, markType: meta.markType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase }); motionPromises.push(motion); return motion; },
@@ -429,6 +430,7 @@
               return renderMotion.apply({ visualId: id, generation: requestGeneration, operation: { ...operation, type: 'exit' }, markType: meta.fromMarkType, element, index: meta.index, elementCount: motionElementCount, phase: motionPhase });
             }
           });
+          motionPromises.push(renderMotion.applyLayer({ visualId: id, generation: requestGeneration, element: reconciled.viewport.querySelector('[data-zone="marks"]'), phase: motionPhase, elementCount: motionElementCount }));
         }
         if (payload.status !== 'working') clearWorkingState(card);
         if (traceId && payload.status !== 'working') {
@@ -459,6 +461,11 @@
       document.querySelector('#diagnostic-id').textContent = refs.map((ref) => `${ref.kind}:${ref.id}`).join(', ');
     }
 
+    function syncSelectedInspector() {
+      const selected = interaction.getState().selection;
+      if (selected.length) renderInspector(selected.map(refForKey));
+    }
+
     function updateScene(next, animateLayout = false) {
       scene = next; revision.textContent = `Revision ${durableScene.revision}`;
       canvasMeta.textContent = `${Object.keys(scene.visuals).length} visual${Object.keys(scene.visuals).length === 1 ? '' : 's'} · ${Object.keys(scene.datasets).length} dataset${Object.keys(scene.datasets).length === 1 ? '' : 's'}`;
@@ -467,6 +474,7 @@
       Object.values(scene.annotations).forEach((annotation, index) => applyLayout(objectView.elementFor('annotation', annotation.id), fallbackAnnotationLayout(annotation, Object.fromEntries(Object.entries(scene.visuals).map(([id, visual]) => [id, visualLayout(visual)])), index), animateLayout));
       for (const card of board.querySelectorAll('.canvas-object[data-kind="visual"]')) { const visual = scene.visuals[card.dataset.visual]; if (visual) applyLayout(card, visualLayout(visual), animateLayout); card.classList.toggle('is-focused', scene.canvas.focus === card.dataset.visual); }
       renderConnectors(connectorLayer, scene.annotations, scene.visuals, (kind, id) => objectView.layoutFor(kind, id));
+      syncSelectedInspector();
     }
 
     async function renderEffectiveScene() {
