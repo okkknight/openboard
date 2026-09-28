@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { DataCanvasRuntime } from "../dist/runtime/data-canvas-runtime.js";
 import { Persistence } from "../dist/runtime/persistence.js";
@@ -213,12 +213,21 @@ test("routes visual and data raw SQL through the read-only guard", async () => {
 });
 
 test("patches a channel failure visual into a daily trend in place", async () => {
-  const runtime = new DataCanvasRuntime({ canvas_id: "m0", revision: 0, datasets: { orders: { id: "orders", path: resolve("examples/orders.csv"), format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
-  const created = await createInWork(runtime, { id: "v1", kind: "plot", title: "Failure by channel", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }, { expr: "avg(case when status='FAILED' then 1 else 0 end)", alias: "failure_rate" }] }, marks: [{ id: "failure", type: "barY", x: "channel", y: "failure_rate" }], layout: { x: 0, y: 0, w: 480, h: 320 } });
-  const patched = await patchInWork(runtime, "v1", { set: { title: "Daily failure-rate trend", "query.filters": [{ field: "created_at", op: "last_days", value: 30 }], "query.dimensions": [{ field: "created_at", time_grain: "day", alias: "day" }] }, remove_marks: ["failure"], add_marks: [{ id: "trend", type: "lineY", x: "day", y: "failure_rate" }] });
-  assert.equal(patched.result.visual.id, "v1");
-  assert.equal(patched.revision, created.revision + 1);
-  assert.equal(patched.result.visual.marks[0].id, "trend");
-  assert.ok(patched.observation.row_count > 0);
-  runtime.close();
+  const root = await mkdtemp(resolve(tmpdir(), "openboard-last-days-"));
+  const today = new Date().toISOString().slice(0, 10);
+  const recent = new Date(Date.now() - 20 * 86_400_000).toISOString().slice(0, 10);
+  const path = resolve(root, "orders.csv");
+  await writeFile(path, `created_at,channel,status\n${recent},A,FAILED\n${today},B,SUCCESS\n`);
+  const runtime = new DataCanvasRuntime({ canvas_id: "m0", revision: 0, datasets: { orders: { id: "orders", path, format: "csv" } }, visuals: {}, annotations: {}, canvas: {} });
+  try {
+    const created = await createInWork(runtime, { id: "v1", kind: "plot", title: "Failure by channel", source: "orders", query: { dimensions: [{ field: "channel" }], measures: [{ agg: "count", alias: "orders" }, { expr: "avg(case when status='FAILED' then 1 else 0 end)", alias: "failure_rate" }] }, marks: [{ id: "failure", type: "barY", x: "channel", y: "failure_rate" }], layout: { x: 0, y: 0, w: 480, h: 320 } });
+    const patched = await patchInWork(runtime, "v1", { set: { title: "Daily failure-rate trend", "query.filters": [{ field: "created_at", op: "last_days", value: 30 }], "query.dimensions": [{ field: "created_at", time_grain: "day", alias: "day" }] }, remove_marks: ["failure"], add_marks: [{ id: "trend", type: "lineY", x: "day", y: "failure_rate" }] });
+    assert.equal(patched.result.visual.id, "v1");
+    assert.equal(patched.revision, created.revision + 1);
+    assert.equal(patched.result.visual.marks[0].id, "trend");
+    assert.ok(patched.observation.row_count > 0);
+  } finally {
+    runtime.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

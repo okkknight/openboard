@@ -7,7 +7,7 @@ function fakePerformance() {
   return {
     marks,
     mark(name) { marks.push({ name, startTime: marks.length * 10 }); },
-    clearMarks(prefix) { for (let index = marks.length - 1; index >= 0; index -= 1) if (marks[index].name.startsWith(prefix)) marks.splice(index, 1); }
+    clearMarks(name) { for (let index = marks.length - 1; index >= 0; index -= 1) if (marks[index].name === name) marks.splice(index, 1); }
   };
 }
 
@@ -30,4 +30,13 @@ test("keeps only the most recent trace ids", () => {
   traces.begin("trace-2");
   traces.begin("trace-3");
   assert.deepEqual(traces.traceIds(), ["trace-2", "trace-3"]);
+});
+
+test("clears every concrete performance mark when a trace expires", () => {
+  const api = fakePerformance();
+  const traces = createBrowserTrace({ performanceApi: api, maxTraces: 1 });
+  traces.mark("trace-1", "draft_visible");
+  traces.mark("trace-1", "visual_first_paint");
+  traces.begin("trace-2");
+  assert.deepEqual(api.marks, []);
 });

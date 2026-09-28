@@ -3,14 +3,17 @@ const ALLOWED = new Set(['draft_visible', 'visual_first_paint', 'visual_settled'
 export function createBrowserTrace({ performanceApi = performance, maxTraces = 100 } = {}) {
   const traces = new Map();
   const prefix = (traceId) => `openboard:${traceId}:`;
+  const clearTraceMarks = (traceId) => {
+    for (const entry of traces.get(traceId) ?? []) performanceApi.clearMarks?.(entry.mark_name);
+  };
   return {
     begin(traceId) {
       if (!traceId || traces.has(traceId)) return;
       traces.set(traceId, []);
       while (traces.size > maxTraces) {
         const oldest = traces.keys().next().value;
+        clearTraceMarks(oldest);
         traces.delete(oldest);
-        performanceApi.clearMarks?.(prefix(oldest));
       }
     },
     mark(traceId, name) {
@@ -24,6 +27,6 @@ export function createBrowserTrace({ performanceApi = performance, maxTraces = 1
     },
     snapshot(traceId) { return structuredClone(traces.get(traceId) ?? []); },
     traceIds() { return [...traces.keys()]; },
-    clear(traceId) { traces.delete(traceId); performanceApi.clearMarks?.(prefix(traceId)); }
+    clear(traceId) { clearTraceMarks(traceId); traces.delete(traceId); }
   };
 }

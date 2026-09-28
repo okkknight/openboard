@@ -214,17 +214,19 @@ test("serves a vivid categorical palette for Plot marks", async () => {
   } finally { await server.close(); runtime.close(); }
 });
 
-test("serves entrance animations without storing animation state in the scene", async () => {
+test("serves unified semantic motion without storing animation state in the scene", async () => {
   const runtime = new DataCanvasRuntime({ canvas_id: "motion", revision: 0, datasets: {}, visuals: {}, annotations: {}, canvas: {} });
   const server = await createWebServer(runtime, 0);
   try {
     const html = await fetch(`http://127.0.0.1:${server.port}/`).then((response) => response.text());
+    const motion = await fetch(`http://127.0.0.1:${server.port}/assets/render-motion.js`).then((response) => response.text());
     assert.match(html, /prefers-reduced-motion/);
-    assert.match(html, /animatePlotMarks/);
-    assert.match(html, /animateArc/);
-    assert.match(html, /animatePrimitiveMark/);
-    assert.match(html, /type === 'text'/);
-    assert.match(html, /renderedVisualSignatures/);
+    assert.match(html, /createRenderMotion/);
+    assert.match(html, /renderMotion\.apply/);
+    assert.match(motion, /baseline-enter/);
+    assert.match(motion, /strokeDasharray/);
+    assert.match(motion, /finishAnimationAtCurrentState/);
+    assert.doesNotMatch(JSON.stringify(runtime.inspect()), /"(?:animation|motion|trace_id)"\s*:/);
   } finally { await server.close(); runtime.close(); }
 });
 

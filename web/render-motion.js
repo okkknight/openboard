@@ -23,25 +23,62 @@ export function motionStrategy(operation, markType) {
   return { family, action };
 }
 
-export function motionFrames(operation, markType, preservesSvgTransform = false) {
+export function motionFrames(operation, markType, preservesSvgTransform = false, pathLength = 0) {
   const strategy = motionStrategy(operation, markType);
   if (preservesSvgTransform) return operation === 'enter' ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }];
-  return operation === 'enter'
-    ? [{ opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(5px)' }, { opacity: 1, transform: 'none' }]
-    : [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: strategy.family === 'dot' ? 'scale(0)' : 'translateY(-4px)' }];
+  const entering = operation === 'enter';
+  if ((strategy.family === 'line' || strategy.family === 'rule') && pathLength > 0) {
+    const length = String(pathLength);
+    return entering
+      ? [{ opacity: 0.25, strokeDasharray: `${length} ${length}`, strokeDashoffset: length }, { opacity: 1, strokeDasharray: `${length} ${length}`, strokeDashoffset: '0' }]
+      : [{ opacity: 1, strokeDasharray: `${length} ${length}`, strokeDashoffset: '0' }, { opacity: 0.25, strokeDasharray: `${length} ${length}`, strokeDashoffset: length }];
+  }
+  if (strategy.family === 'bar' || strategy.family === 'area') {
+    return entering
+      ? [{ opacity: 0.2, transform: 'scaleY(0)' }, { opacity: 1, transform: 'scaleY(1)' }]
+      : [{ opacity: 1, transform: 'scaleY(1)' }, { opacity: 0, transform: 'scaleY(0)' }];
+  }
+  if (strategy.family === 'dot') {
+    return entering
+      ? [{ opacity: 0, transform: 'scale(0)' }, { opacity: 1, transform: 'scale(1)' }]
+      : [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0)' }];
+  }
+  if (strategy.family === 'text') {
+    return entering
+      ? [{ opacity: 0, transform: 'translateY(5px)' }, { opacity: 1, transform: 'translateY(0)' }]
+      : [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-4px)' }];
+  }
+  if (strategy.family === 'arc') {
+    return entering
+      ? [{ opacity: 0, transform: 'scale(.92)' }, { opacity: 1, transform: 'scale(1)' }]
+      : [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.92)' }];
+  }
+  return entering ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }];
 }
 
 export function captureGeometry(element) {
   return Object.fromEntries(NUMERIC_ATTRIBUTES.map((name) => [name, element.getAttribute(name)]).filter(([, value]) => value !== null));
 }
 
+export function finishAnimationAtCurrentState(animation) {
+  try { animation.commitStyles?.(); } catch {}
+  animation.cancel?.();
+}
+
 function waitForAnimation(element, keyframes, options, current, register) {
   if (!element.animate || !current()) return Promise.resolve();
   const animation = element.animate(keyframes, options);
-  register?.(animation);
+  const unregister = register?.(animation);
   return new Promise((resolve) => {
-    animation.onfinish = resolve;
-    animation.oncancel = resolve;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      unregister?.();
+      resolve();
+    };
+    animation.onfinish = () => { animation.cancel?.(); settle(); };
+    animation.oncancel = settle;
   });
 }
 
@@ -68,6 +105,7 @@ function tweenGeometry(element, from, current, duration = 220) {
 export function createRenderMotion({ reduced = () => false, hidden = () => false, maxAnimatedElements = 120, policy = createMotionPolicy({ reduced, hidden, maxAnimatedElements }) } = {}) {
   const latest = new Map();
   const animations = new Map();
+  let animationSequence = 0;
   const current = (visualId, generation) => latest.get(visualId) === generation;
   const key = (visualId, generation) => `${visualId}:${generation}`;
 
@@ -76,7 +114,7 @@ export function createRenderMotion({ reduced = () => false, hidden = () => false
       latest.set(visualId, generation);
       for (const [animationKey, animation] of animations) {
         if (!animationKey.startsWith(`${visualId}:`)) continue;
-        animation.cancel?.();
+        finishAnimationAtCurrentState(animation);
         animations.delete(animationKey);
       }
     },
@@ -86,7 +124,11 @@ export function createRenderMotion({ reduced = () => false, hidden = () => false
       const decision = policy.forOperation({ phase, operation: operation.type, family: strategy.family, index, elementCount });
       if (!decision.animate) return;
       const active = () => current(visualId, generation);
-      const register = (animation) => animations.set(`${key(visualId, generation)}:${animations.size}`, animation);
+      const register = (animation) => {
+        const animationKey = `${key(visualId, generation)}:${animationSequence++}`;
+        animations.set(animationKey, animation);
+        return () => animations.delete(animationKey);
+      };
       const delay = decision.delay;
       if (operation.type === 'update') {
         if (decision.mode === 'geometry-update' && strategy.action === 'geometry-update') await tweenGeometry(element, from, active, decision.duration);
@@ -94,7 +136,8 @@ export function createRenderMotion({ reduced = () => false, hidden = () => false
         return;
       }
       const preservesSvgTransform = element instanceof SVGElement && element.hasAttribute('transform');
-      const frames = decision.mode === 'opacity-only' ? (operation.type === 'enter' ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }]) : motionFrames(operation.type, markType, preservesSvgTransform);
+      const pathLength = (strategy.family === 'line' || strategy.family === 'rule') ? Number(element.getTotalLength?.()) || 0 : 0;
+      const frames = decision.mode === 'opacity-only' ? (operation.type === 'enter' ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }]) : motionFrames(operation.type, markType, preservesSvgTransform, pathLength);
       if (!preservesSvgTransform) {
         element.style.transformBox = 'fill-box';
         element.style.transformOrigin = strategy.family === 'bar' || strategy.family === 'area' ? 'center bottom' : 'center';
@@ -102,6 +145,8 @@ export function createRenderMotion({ reduced = () => false, hidden = () => false
       await waitForAnimation(element, frames, { duration: decision.duration, delay, easing: decision.easing, fill: 'both' }, active, register);
       if (!preservesSvgTransform) element.style.transform = '';
       element.style.opacity = '';
+      element.style.strokeDasharray = '';
+      element.style.strokeDashoffset = '';
     }
   };
 }
