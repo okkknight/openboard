@@ -131,6 +131,8 @@
     let scene = null;
     let zoom = 1;
     const activeWorks = new Map();
+    const terminalWorks = new Set();
+    const workRenderRequests = new Map();
     const lastSequence = new Map();
     const socketEventQueue = createSerialTaskQueue();
     const constructionTrails = new Map();
@@ -387,16 +389,35 @@
     }
 
     async function render(id, workId = workForVisual(id), artifactGeneration, traceId) {
+      if (workId && terminalWorks.has(workId)) return;
       const requestGeneration = renderGenerations.request(id);
       renderMotion.begin(id, requestGeneration);
       const params = new URLSearchParams();
       if (workId) params.set('work_id', workId);
       if (artifactGeneration !== undefined) params.set('artifact_generation', String(artifactGeneration));
       const url = appPath('/api/visual/' + encodeURIComponent(id) + (params.size ? `?${params}` : ''));
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`visual ${id} unavailable`);
-      const payload = await response.json();
-      if (!renderGenerations.accepts(id, requestGeneration)) return;
+      const controller = workId ? new AbortController() : null;
+      if (controller) {
+        if (!workRenderRequests.has(workId)) workRenderRequests.set(workId, new Set());
+        workRenderRequests.get(workId).add(controller);
+      }
+      let response;
+      let payload;
+      try {
+        response = await fetch(url, controller ? { signal: controller.signal } : undefined);
+        if (workId && terminalWorks.has(workId)) return;
+        if (!response.ok) throw new Error(`visual ${id} unavailable`);
+        payload = await response.json();
+      } catch (error) {
+        if (controller?.signal.aborted && terminalWorks.has(workId)) return;
+        throw error;
+      } finally {
+        if (controller) {
+          workRenderRequests.get(workId)?.delete(controller);
+          if (!workRenderRequests.get(workId)?.size) workRenderRequests.delete(workId);
+        }
+      }
+      if (!renderGenerations.accepts(id, requestGeneration) || (workId && terminalWorks.has(workId))) return;
       const previousPayload = visualRenderCache.get(id);
       const motionPhase = payload.status === 'working' ? 'draft' : previousPayload ? 'semantic-update' : 'data-enter';
       renderIdentity.remember(payload.result.artifact, payload.result.plot);
@@ -493,6 +514,7 @@
       empty.hidden = board.querySelectorAll('.canvas-object').length > 0;
     }
     async function applyWorkEvent(event) {
+      if (terminalWorks.has(event.work_id) && event.type !== 'work.completed' && event.type !== 'work.cancelled') return;
       if (!acceptWorkEvent(lastSequence, event)) return;
       recordWorkStage(event);
       const terminal = event.type === 'work.completed' || event.type === 'work.cancelled';
@@ -502,6 +524,7 @@
         if (event.type === 'work.completed') durableScene = await fetch(appPath('/api/scene')).then((response) => response.json());
         updateScene(mergeEffectiveScene());
         await renderAffectedVisuals(event.affected_ids ?? [], undefined, undefined, event.trace_id);
+        terminalWorks.delete(event.work_id);
         return;
       }
       if (event.work) activeWorks.set(event.work_id, event.work);
@@ -577,6 +600,10 @@
       nextSocket.addEventListener('error', () => { if (socket === nextSocket) setConnection('Connection error', false); });
       nextSocket.addEventListener('message', ({ data }) => {
         const event = JSON.parse(data);
+        if (event.type === 'work.completed' || event.type === 'work.cancelled') {
+          terminalWorks.add(event.work_id);
+          for (const controller of workRenderRequests.get(event.work_id) ?? []) controller.abort();
+        }
         void socketEventQueue.enqueue(async () => {
           if (socket !== nextSocket) return;
           if (event.type.startsWith('work.')) {
