@@ -4,3 +4,7 @@ dist/
 .datacanvas/
 .worktrees/
 .DS_Store
+.env
+.env.*
+!.env.example
+deploy/openboard.env
