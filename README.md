@@ -4,6 +4,8 @@ OpenBoard 是一个给 AI agent 用的本地数据可视化运行时。它让 ag
 
 它解决的不是“让 agent 生成一个一次性的 HTML 报表”，而是让数据分析可以留下来、继续改、分支比较，也可以回到上一个版本。数据是颜料，Canvas 是画布，agent 负责把推理变成看得见的东西。
 
+**[打开线上 Canvas →](https://boringmax.com/openboard/)**
+
 ![OpenBoard 的叙事分析画布](docs/superpowers/specs/assets/2026-09-17-narrative-analysis-board.png)
 
 ## 它怎么工作
